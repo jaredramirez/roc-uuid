@@ -14,7 +14,8 @@ import uuid.Uuid
 ##
 ## - `B <bits> <ms>`: the UUID with those bits, as text, URN, bytes, version
 ##   and variant, then `v4`, `v7` and `v8` made from the same bits
-## - `N3 <namespace> <name>`: `v3` of a name in a namespace
+## - `N3 <namespace> <name>`, `N5 <namespace> <name>`: `v3` or `v5` of a
+##   name in a namespace
 ## - `P <text>`: `from_str` and `from_str_lenient` of the text
 ## - `R`: a `v4` from `random_bits!` with the platform's randomness
 main! = |_args| {
@@ -50,6 +51,8 @@ answer! = |words|
 		}
 		["N3", namespace_hex, name_hex] => Uuid.v3(Uuid.from_u128(hex_u128(namespace_hex)), unhex(name_hex)).to_str()
 		["N3", namespace_hex] => Uuid.v3(Uuid.from_u128(hex_u128(namespace_hex)), []).to_str()
+		["N5", namespace_hex, name_hex] => Uuid.v5(Uuid.from_u128(hex_u128(namespace_hex)), unhex(name_hex)).to_str()
+		["N5", namespace_hex] => Uuid.v5(Uuid.from_u128(hex_u128(namespace_hex)), []).to_str()
 		["P", text_hex] => {
 			text = Str.from_utf8_lossy(unhex(text_hex))
 			"${result_str(Uuid.from_str(text))} ${result_str(Uuid.from_str_lenient(text))}"

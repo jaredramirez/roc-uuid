@@ -118,6 +118,8 @@ def main():
         name = rng.randbytes(rng.choice([0, 1, 15, 16, 55, 56, 64, 100]))
         line = f"N3 {namespace.hex} {name.hex()}".rstrip()
         cases.append((line, lambda answer, ns=namespace, name=name: (answer == str(uuid.uuid3(ns, name)), str(uuid.uuid3(ns, name)))))
+        line = f"N5 {namespace.hex} {name.hex()}".rstrip()
+        cases.append((line, lambda answer, ns=namespace, name=name: (answer == str(uuid.uuid5(ns, name)), str(uuid.uuid5(ns, name)))))
 
         # Exactly one character changed, to any printable ASCII or a
         # non-ASCII character, so that a single wrong acceptance shows up

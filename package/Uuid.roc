@@ -19,6 +19,7 @@
 ## - `WrongLength` the text is too short or too long. The index is where the
 ##   text ended, or the first byte past the end of a UUID.
 import md5.Md5
+import sha1.Sha1
 
 ParseErr : [InvalidUuid({ index : U64, problem : [InvalidChar(U8), ExpectedHyphen, WrongLength] })]
 
@@ -236,6 +237,17 @@ Uuid :: [Bits(U128)].{
 	## ```
 	v3 : Uuid, List(U8) -> Uuid
 	v3 = |namespace, name| name_based(Md5.hash(namespace.to_bytes().concat(name)).to_bytes(), 3)
+
+	## A version 5 UUID: the SHA-1 hash of `namespace` followed by `name`, so
+	## the same name in the same namespace always gives the same UUID. RFC 9562
+	## prefers this to `v3`.
+	##
+	## ```roc
+	## Uuid.v5(Uuid.namespace_dns, "www.example.com".to_utf8())
+	## # 2ed6657d-e927-568b-95e1-2665a8aea6a2
+	## ```
+	v5 : Uuid, List(U8) -> Uuid
+	v5 = |namespace, name| name_based(Sha1.hash(namespace.to_bytes().concat(name)).to_bytes(), 5)
 
 	## The namespace for fully qualified domain names, for `v3` and `v5`.
 	namespace_dns : Uuid
@@ -508,6 +520,11 @@ expect parse("919108f7-52d1-4320-9bac-f847db4148a8").unix_ms() == Err(NotV7)
 expect Uuid.v3(Uuid.namespace_dns, "www.example.com".to_utf8()) == parse("5df41881-3aed-3515-88a7-2f4a814cf09e")
 
 expect Uuid.v3(Uuid.namespace_url, "".to_utf8()).version() == V3
+
+# The v5 example, from RFC 9562 appendix A.4
+expect Uuid.v5(Uuid.namespace_dns, "www.example.com".to_utf8()) == parse("2ed6657d-e927-568b-95e1-2665a8aea6a2")
+
+expect Uuid.v5(Uuid.namespace_x500, "".to_utf8()).version() == V5
 
 # Nil and max
 expect Uuid.nil.to_str() == "00000000-0000-0000-0000-000000000000"

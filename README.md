@@ -4,8 +4,8 @@ UUIDs for [Roc](https://www.roc-lang.org), following
 [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562).
 
 - Parse and print UUIDs, with errors that say what's wrong and where
-- Make version 4 (random), 7 (random, sorted by time), 8 (custom) and 3
-  (name-based) UUIDs
+- Make version 4 (random), 7 (random, sorted by time), 8 (custom), and 3 and
+  5 (name-based) UUIDs
 - Keep version 7 UUIDs in order within a millisecond with `v7_after`
 - Read a UUID's version, variant and version 7 timestamp
 - Works on every platform, because it never reads a clock or random
@@ -66,11 +66,17 @@ Any `U128` works too, which is handy in tests.
 Uuid.v4(bits)                 # 122 random bits
 Uuid.v7(unix_ms, bits)        # the time in milliseconds, then 74 random bits
 Uuid.v8(bits)                 # your own 122 bits
+Uuid.v5(Uuid.namespace_dns, "www.example.com".to_utf8())
 Uuid.v3(Uuid.namespace_dns, "www.example.com".to_utf8())
 ```
 
 Use version 7 for database keys, because new keys land at the end of the
-index. Use version 4 when an ID shouldn't reveal when it was made.
+index. Use version 4 when an ID shouldn't reveal when it was made. Use
+version 5 when the same name should always give the same UUID, and version 3
+only to match existing version 3 IDs. Names are bytes, and the namespaces
+from RFC 9562 are `namespace_dns`, `namespace_url`, `namespace_oid` and
+`namespace_x500`. Version 5 uses [roc-sha1](https://github.com/jaredramirez/roc-sha1)
+and version 3 [roc-md5](https://github.com/niclas-ahden/roc-md5).
 
 Version 7 UUIDs from different milliseconds sort by time. To also keep them
 in order within a millisecond, or when the clock goes backwards, make each
@@ -144,7 +150,8 @@ that repeat and go backwards.
 `just diff` checks the package against Python's uuid module, which shares no
 code with it. For each random 128-bit value it compares the text, URN,
 bytes, version and variant with `uuid.UUID`, the `v4`, `v7` and `v8` results
-with Python setting the same bits, and `v3` with `uuid.uuid3`. It also
+with Python setting the same bits, and `v3` and `v5` with `uuid.uuid3` and
+`uuid.uuid5`. It also
 parses the value spelled every supported way, with one character changed,
 and with random edits, and checks that we accept exactly the documented
 forms and read them as Python does. Then it parses UUIDs Python made itself,
