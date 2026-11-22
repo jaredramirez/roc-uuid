@@ -1,0 +1,35 @@
+name: Release
+
+# Push a version tag such as 0.1.0 to publish the bundle as a release asset. The
+# package URL is then
+# https://github.com/<owner>/roc-uuid/releases/download/<tag>/<hash>.tar.zst
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+      - name: Install devenv
+        run: nix profile install nixpkgs#devenv
+      - name: Test
+        run: devenv test
+      - name: Test with every backend
+        run: devenv shell just test-all
+      - name: Compare against Python's uuid module
+        run: devenv shell just diff --count 5000
+      - name: Bundle
+        run: devenv shell just bundle
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          archive=$(ls dist/*.tar.zst)
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$(basename "$archive")"
+          gh release create "$GITHUB_REF_NAME" "$archive" --title "$GITHUB_REF_NAME" --notes "Package URL: \`$url\`"
