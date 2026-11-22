@@ -48,5 +48,11 @@ in
     pkgs.python314
   ];
 
-  enterTest = "just check && just test && just fmt-check";
+  # One command per line: devenv runs this with `set -e`, which ignores a
+  # failure inside an `&&` list, so `a && b && c` could never fail
+  enterTest = ''
+    just check
+    just test
+    just fmt-check
+  '';
 }
