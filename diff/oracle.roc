@@ -19,7 +19,7 @@ import uuid.Uuid
 ## - `P <text>`: `from_str` and `from_str_lenient` of the text
 ## - `A <previous> <ms> <bits>`: `next_v7`
 ## - `NS`: the four namespaces
-## - `R`: a `v4` from `Uuid.SystemGen` with the platform's randomness
+## - `R`: a `v4` from `Uuid.Gen.Sys` with the platform's randomness
 main! = |_args| {
 	input = Stdin.read_to_end!()?
 	var $out = []
@@ -39,14 +39,16 @@ answer! = |words|
 			bits = hex_u128(bits_hex)
 			ms = hex_u128(ms_hex).to_u64_wrap()
 			uuid = Uuid.from_u128(bits)
+			(v4, _) = fixed(bits).v4()
+			(v7, _) = fixed(bits).v7(ms)
 			[
 				uuid.to_str(),
 				uuid.to_urn(),
 				hex_bytes(uuid.to_bytes()),
 				version_str(uuid.version()),
 				variant_str(uuid.variant()),
-				Uuid.Random.from_bits(bits).v4().to_str(),
-				Uuid.Random.from_bits(bits).v7(ms).to_str(),
+				v4.to_str(),
+				v7.to_str(),
 				Uuid.v8(bits).to_str(),
 			]
 				|> Str.join_with(" ")
@@ -60,10 +62,13 @@ answer! = |words|
 			"${result_str(Uuid.from_str(text))} ${result_str(Uuid.from_str_lenient(text))}"
 		}
 		["P"] => "${result_str(Uuid.from_str(""))} ${result_str(Uuid.from_str_lenient(""))}"
-		["A", previous_hex, ms_hex, bits_hex] => Uuid.Random.from_bits(hex_u128(bits_hex)).next_v7(Uuid.from_u128(hex_u128(previous_hex)), hex_u128(ms_hex).to_u64_wrap()).to_str()
+		["A", previous_hex, ms_hex, bits_hex] => {
+			(uuid, _) = fixed(hex_u128(bits_hex)).next_v7(Uuid.from_u128(hex_u128(previous_hex)), hex_u128(ms_hex).to_u64_wrap())
+			uuid.to_str()
+		}
 		["NS"] => [Uuid.namespace_dns, Uuid.namespace_url, Uuid.namespace_oid, Uuid.namespace_x500].map(|u| u.to_str()) |> Str.join_with(" ")
 		["R"] =>
-			match Uuid.SystemGen.new(Random.seed_u64!).v4!() {
+			match Uuid.Gen.Sys.new(Random.seed_u64!).v4!() {
 				Ok(uuid) => uuid.to_str()
 				Err(_) => "random-error"
 			}
@@ -128,3 +133,13 @@ hex_bytes = |bytes| {
 	digit = |n| if (n < 10) '0' + n else 'a' + n - 10
 	Str.from_utf8_lossy(bytes.fold([], |out, b| out.append(digit(b.shr_zf_wrap(4))).append(digit(b.bitwise_and(0xF)))))
 }
+
+## A generator that hands out the two halves of `bits`, so a seeded `Gen`
+## makes its UUID from exactly those bits
+Fixed := [Fixed(U64, U64)].{
+	step : Fixed -> (U64, Fixed)
+	step = |Fixed(hi, lo)| (hi, Fixed(lo, 0))
+}
+
+fixed : U128 -> Uuid.Gen.Seeded(Fixed)
+fixed = |bits| Uuid.Gen.Seeded.new(Fixed(bits.shr_zf_wrap(64).to_u64_wrap(), bits.to_u64_wrap()))

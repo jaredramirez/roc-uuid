@@ -36,19 +36,20 @@ test! = |{ data, previous, ms }| {
 	}
 
 	bits = data.take_first(16).fold(0.U128, |n, byte| n.shl_wrap(8).bitwise_or(byte.to_u128()))
-	random = Uuid.Random.from_bits(bits)
-	for (uuid, version) in [(random.v4(), V4), (random.v7(ms), V7), (Uuid.v8(bits), V8)] {
+	(v4, _) = fixed(bits).v4()
+	(v7, _) = fixed(bits).v7(ms)
+	for (uuid, version) in [(v4, V4), (v7, V7), (Uuid.v8(bits), V8)] {
 		if uuid.version() != version or uuid.variant() != Rfc9562 or Uuid.from_bytes(uuid.to_bytes()) != Ok(uuid) {
 			crash "a generated UUID has the wrong version, variant or bytes"
 		}
 	}
-	if random.v7(ms).unix_ms() != Ok(ms.bitwise_and(0xFFFF_FFFF_FFFF)) {
+	if v7.unix_ms() != Ok(ms.bitwise_and(0xFFFF_FFFF_FFFF)) {
 		crash "v7 lost its timestamp"
 	}
 
 	# next_v7 moves forward, except past the last millisecond in the year 10889
 	before = Uuid.from_u128(previous)
-	after = random.next_v7(before, ms)
+	(after, _) = fixed(bits).next_v7(before, ms)
 	at_the_end = before.unix_ms() == Ok(0xFFFF_FFFF_FFFF) and previous.shr_zf_wrap(64).bitwise_and(0xFFF) == 0xFFF
 	if after.version() != V7 or after.variant() != Rfc9562 {
 		crash "next_v7 made something other than a v7"
@@ -96,3 +97,13 @@ target = Fuzz.target_with!({
 	test!,
 	show: |input| Str.inspect(input),
 })
+
+## A generator that hands out the two halves of `bits`, so a seeded `Gen`
+## makes its UUID from exactly those bits
+Fixed := [Fixed(U64, U64)].{
+	step : Fixed -> (U64, Fixed)
+	step = |Fixed(hi, lo)| (hi, Fixed(lo, 0))
+}
+
+fixed : U128 -> Uuid.Gen.Seeded(Fixed)
+fixed = |bits| Uuid.Gen.Seeded.new(Fixed(bits.shr_zf_wrap(64).to_u64_wrap(), bits.to_u64_wrap()))

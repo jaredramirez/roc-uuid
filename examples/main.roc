@@ -13,7 +13,7 @@ import uuid.Uuid
 ## Every example from the README, so CI checks that they compile and run
 main! = |_args| {
 	# Random bits from the operating system
-	gen = Uuid.SystemGen.new(Random.seed_u64!)
+	gen = Uuid.Gen.Sys.new(Random.seed_u64!)
 
 	# Version 4: random
 	id = gen.v4!()?
@@ -29,7 +29,7 @@ main! = |_args| {
 	Stdout.line!("parsed: ${parsed.to_str()}")?
 
 	# A pure generator, seeded from the platform's randomness
-	var $gen = Uuid.SeededGen.new(Prng.seed(Random.seed_u64!()?))
+	var $gen = Uuid.Gen.Seeded.new(Prng.seed(Random.seed_u64!()?))
 	(first, $gen) = $gen.v4()
 	(second, $gen) = $gen.v4()
 	Stdout.line!("seeded v4s: ${first.to_str()} ${second.to_str()}")?
