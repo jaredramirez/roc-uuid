@@ -23,6 +23,10 @@ main! = |_args| {
 	sorted_id = Uuid.v7(now, more_bits)
 	Stdout.line!("v7: ${sorted_id.to_str()}")?
 
+	# Parse one from text
+	parsed = Uuid.from_str("f81d4fae-7dec-11d0-a765-00a0c91e6bf6")?
+	Stdout.line!("parsed: ${parsed.to_str()}")?
+
 	# A pure generator, seeded from the platform's randomness
 	var $seed = Prng.seed(Random.seed_u64!()?)
 	(seeded_bits, $seed) = Uuid.random_bits($seed)
@@ -44,12 +48,12 @@ main! = |_args| {
 	Stdout.line!("v3: ${by_name_md5.to_str()}")?
 
 	# Parsing, printing and the exposed types
-	parsed = Uuid.from_str_lenient("{F81D4FAE-7DEC-11D0-A765-00A0C91E6BF6}")?
-	Stdout.line!("${parsed.to_str()} ${parsed.to_urn()} ${describe(parsed.version())}")?
+	lenient = Uuid.from_str_lenient("{F81D4FAE-7DEC-11D0-A765-00A0C91E6BF6}")?
+	Stdout.line!("${lenient.to_str()} ${lenient.to_urn()} ${describe(lenient.version())}")?
 	Stdout.line!(Str.inspect(Uuid.from_str("f81d4fae7dec11d0a76500a0c91e6bf6")))?
 
 	# Sorting
-	sorted = [Uuid.max, Uuid.nil, parsed].sort()
+	sorted = [Uuid.max, Uuid.nil, lenient].sort()
 	Stdout.line!(sorted.map(|u| u.to_str()) |> Str.join_with(" < "))?
 	Ok({})
 }

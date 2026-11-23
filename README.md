@@ -38,6 +38,10 @@ main! = |_args| {
 	sorted_id = Uuid.v7(now, more_bits)
 	Stdout.line!("v7: ${sorted_id.to_str()}")?
 
+	# Parse one from text
+	parsed = Uuid.from_str("f81d4fae-7dec-11d0-a765-00a0c91e6bf6")?
+	Stdout.line!("parsed: ${parsed.to_str()}")?
+
 	Ok({})
 }
 ```
