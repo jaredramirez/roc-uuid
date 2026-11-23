@@ -9,6 +9,7 @@ check:
     roc check fuzz/main.roc
     roc check bench/main.roc
     roc check diff/oracle.roc
+    roc check examples/main.roc
 
 test:
     roc test package/main.roc
@@ -18,11 +19,15 @@ test-all:
     for opt in interpreter dev size speed; do roc test --opt=$opt package/main.roc || exit 1; done
 
 fmt:
-    roc fmt package fuzz bench diff
+    roc fmt package fuzz bench diff examples
 
 # Fail if any file needs formatting.
 fmt-check:
-    roc fmt --check package fuzz bench diff
+    roc fmt --check package fuzz bench diff examples
+
+# Run every example from the README.
+examples:
+    roc examples/main.roc
 
 docs:
     roc docs package/main.roc --output=generated-docs

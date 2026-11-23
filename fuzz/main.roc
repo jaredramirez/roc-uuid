@@ -65,10 +65,15 @@ check_error = |InvalidUuid({ index, problem }), bytes|
 	match problem {
 		InvalidChar(byte) if bytes.get(index) == Ok(byte) => {}
 		InvalidChar(_) => crash "InvalidChar points at the wrong byte"
-		ExpectedHyphen if bytes.get(index) != Ok('-') => {}
-		ExpectedHyphen => crash "ExpectedHyphen points at a hyphen"
-		WrongLength if index <= bytes.len() => {}
-		WrongLength => crash "WrongLength points past the end"
+		# A hyphen slot is 8, 13, 18 or 23 bytes into the UUID, which starts
+		# 0, 1 (after `{`) or 9 (after `urn:uuid:`) bytes into the text
+		ExpectedHyphen if [8, 9, 13, 14, 17, 18, 19, 22, 23, 24, 27, 32].contains(index) and bytes.get(index) != Ok('-') and bytes.get(index).is_ok() => {}
+		ExpectedHyphen => crash "ExpectedHyphen is not at a hyphen slot holding something else"
+		# Where the text ends, where the inside of `{...}` ends, or right after
+		# a UUID's 32 digits or 36 characters, at any of the three starting
+		# offsets
+		WrongLength if index == bytes.len() or (index + 1 == bytes.len() and bytes.starts_with(['{']) and bytes.ends_with(['}'])) or (index < bytes.len() and [32, 33, 36, 37, 45].contains(index)) => {}
+		WrongLength => crash "WrongLength is neither at the end nor where a UUID ends"
 	}
 
 lowercase : List(U8) -> List(U8)

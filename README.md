@@ -27,23 +27,28 @@ import pf.Utc
 import uuid.Uuid
 
 main! = |_args| {
-	bits = Uuid.random_bits!(Random.seed_u64!)?
-	Stdout.line!(Uuid.v4(bits).to_str())?
+	Stdout.line!(Uuid.v4(Uuid.random_bits!(Random.seed_u64!)?).to_str())?
 
 	now = Utc.now!().to_millis_since_epoch().to_u64_wrap()
-	Stdout.line!(Uuid.v7(now, bits).to_str())?
+	Stdout.line!(Uuid.v7(now, Uuid.random_bits!(Random.seed_u64!)?).to_str())?
 	Ok({})
 }
 ```
+
+`examples/main.roc` runs every example in this README, and CI checks it.
 
 ### Randomness and time
 
 This package never asks the platform for anything. You give it random bits
 and the time, so it works the same on every platform and in tests.
 
+Use fresh random bits for every UUID. Reusing them makes UUIDs share bits,
+so one gives away part of another.
+
 There are two ways to get random bits. With an effectful source, such as
 basic-cli's `Random.seed_u64!`, pass the function in and its error passes
-through.
+through. This is the one to use for IDs, because basic-cli reads the
+operating system's secure random number generator, as RFC 9562 recommends.
 
 ```roc
 bits = Uuid.random_bits!(Random.seed_u64!)?
@@ -51,14 +56,23 @@ bits = Uuid.random_bits!(Random.seed_u64!)?
 
 With a pure generator, such as [roc-prng](https://github.com/niclas-ahden/roc-prng)'s
 `Seed`, thread it through a mutable variable. Any type with a
-`step : g -> (U64, g)` method works.
+`step : g -> (U64, g)` method works. Seed it from the platform's randomness,
+not the clock, since two processes seeded at the same moment would make the
+same UUIDs. roc-prng's generator isn't cryptographically secure, so prefer
+`random_bits!` when UUIDs must be hard to guess.
 
 ```roc
-var $seed = Random.seed(Utc.now!().to_u64_wrap())
+import prng.Random as Prng
+
+var $seed = Prng.seed(Random.seed_u64!()?)
 (bits, $seed) = Uuid.random_bits($seed)
 ```
 
 Any `U128` works too, which is handy in tests.
+
+Timestamps are Unix milliseconds. Only 48 bits fit, which lasts until the
+year 10889, and anything above that is dropped without an error, so a
+timestamp in nanoseconds or seconds gives a wrong but valid-looking UUID.
 
 ### Making UUIDs
 
@@ -92,7 +106,10 @@ for _ in rows {
 ```
 
 The only state is the last UUID, so you can pick up from one you stored,
-like the newest row in a table.
+like the newest row in a table. Because `v7_after` always sorts after the UUID
+you give it, a UUID from the future, say from a clock that was ahead or a
+timestamp in the wrong unit, holds every later one at that future time. Only
+pass UUIDs you made yourself or otherwise trust.
 
 ### Parsing and printing
 
@@ -111,18 +128,20 @@ id.to_urn()   # "urn:uuid:f81d4fae-7dec-11d0-a765-00a0c91e6bf6"
 also takes braces, a `urn:uuid:` prefix, and 32 hex digits without hyphens.
 Errors are `InvalidUuid({ index, problem })`, where `problem` is
 `InvalidChar(byte)`, `ExpectedHyphen` or `WrongLength`, and `index` is the
-byte offset in the text.
+byte offset in the text. The types are `Uuid.ParseErr`, `Uuid.Version` and
+`Uuid.Variant`.
 
 ### Everything else
 
-- `version()` gives `V1` to `V8`, or `Other(n)` for anything else, and
+- `version()` gives `V1` to `V8`, or `Other(n)` for any other nibble and for
+  UUIDs of other variants, which RFC 9562 doesn't define versions for, and
   `variant()` gives `Ncs`, `Rfc9562`, `Microsoft` or `Future`
 - `unix_ms()` reads the timestamp back out of a version 7 UUID
 - `to_bytes()` and `from_bytes()` use the 16 bytes in network byte order,
   and `to_u128()` and `from_u128()` the 128 bits
 - `Uuid.nil` and `Uuid.max` are the all-zeros and all-ones UUIDs
-- `==`, `<` and the rest compare in RFC 9562 byte order, which is time order
-  for version 7, and a `Uuid` works as a `Dict` key
+- `==`, `<`, `List.sort` and the rest compare in RFC 9562 byte order, which
+  is time order for version 7, and a `Uuid` works as a `Dict` key
 
 ## Development
 
@@ -142,26 +161,30 @@ just bench      # nanoseconds per call
 
 `devenv test` runs the checks, tests and a formatting check.
 
-The tests include every example UUID in RFC 9562, checks of every version
-nibble and variant boundary, round trips through text, bytes and `U128`,
-errors at every position, and `v7_after` over thousands of clock readings
-that repeat and go backwards.
+The tests include every example UUID in RFC 9562, the namespaces, checks of
+every version nibble and variant boundary, round trips through text, bytes
+and `U128`, errors at every position, and `v7_after` over thousands of clock
+readings that repeat and go backwards, plus its counter at every edge.
 
 `just diff` checks the package against Python's uuid module, which shares no
 code with it. For each random 128-bit value it compares the text, URN,
 bytes, version and variant with `uuid.UUID`, the `v4`, `v7` and `v8` results
 with Python setting the same bits, and `v3` and `v5` with `uuid.uuid3` and
-`uuid.uuid5`. It also
-parses the value spelled every supported way, with one character changed,
-and with random edits, and checks that we accept exactly the documented
-forms and read them as Python does. Then it parses UUIDs Python made itself,
-and checks that `random_bits!` gives distinct version 4 UUIDs. CI runs 5000
-inputs.
+`uuid.uuid5`. It parses the value spelled every supported way, with one
+character changed, and with random edits. It checks that we accept exactly
+the documented forms, read them as Python does, and report each error at
+the position and with the problem the documented rules give. It compares
+`v7_after` with a separate model of RFC 9562 method 1, from previous UUIDs
+around the clock and with full counters. Then it parses UUIDs Python made
+itself, checks the namespaces, and checks that `random_bits!` gives distinct
+version 4 UUIDs from two separate draws. CI runs 5000 inputs.
 
-The [roc-fuzz](https://github.com/lukewilliamboswell/roc-fuzz) target checks
-that parsing arbitrary text never misreports an error's position, that
-generated UUIDs always have the right version, variant and timestamp, and
-that `v7_after` always moves forward.
+The [roc-fuzz](https://github.com/lukewilliamboswell/roc-fuzz) target parses
+arbitrary text and checks that accepted text round trips and that errors
+point at a plausible place: an invalid character at that byte, a missing
+hyphen at a hyphen position, and a wrong length at the end of the text or of
+a UUID. It also checks that generated UUIDs always have the right version,
+variant and timestamp, and that `v7_after` always moves forward.
 
 CI runs all of this on Linux and macOS for every push to main and every pull
 request.

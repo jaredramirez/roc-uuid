@@ -24,6 +24,8 @@ jobs:
         run: devenv test
       - name: Test with every backend
         run: devenv shell just test-all
+      - name: Run the README examples
+        run: devenv shell just examples
       - name: Compare against Python's uuid module
         run: devenv shell just diff --count 5000
       - name: Fuzz for 60 seconds

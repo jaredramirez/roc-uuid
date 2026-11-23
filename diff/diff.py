@@ -47,6 +47,66 @@ def python_parse(text):
     return uuid.UUID(text)
 
 
+def is_hex(c):
+    return chr(c) in HEX
+
+
+def expected_strict(b, offset=0):
+    """The documented result of from_str on bytes b: ("ok", None) or the
+    error's (index, problem)"""
+    for i, c in enumerate(b[:36]):
+        if i in (8, 13, 18, 23):
+            if c != ord("-"):
+                return (offset + i, "hyphen")
+        elif not is_hex(c):
+            return (offset + i, "char")
+    if len(b) != 36:
+        return (offset + min(len(b), 36), "length")
+    return ("ok", None)
+
+
+def expected_hex(b, offset):
+    for i, c in enumerate(b[:32]):
+        if not is_hex(c):
+            return (offset + i, "char")
+    if len(b) != 32:
+        return (offset + min(len(b), 32), "length")
+    return ("ok", None)
+
+
+def expected_any(b, offset):
+    return expected_strict(b, offset) if len(b) > 8 and b[8] == ord("-") else expected_hex(b, offset)
+
+
+def expected_lenient(b):
+    """The documented result of from_str_lenient on bytes b"""
+    if b.startswith(b"{"):
+        if len(b) >= 2 and b.endswith(b"}"):
+            return expected_any(b[1:-1], 1)
+        inner = expected_any(b[1:], 1)
+        return (len(b), "length") if inner[0] == "ok" else inner
+    if b[:9].lower() == b"urn:uuid:":
+        return expected_strict(b[9:], 9)
+    return expected_any(b, 0)
+
+
+def v7_after(previous, ms, bits):
+    """RFC 9562 section 6.2 method 1, as documented: a 12-bit counter after
+    the timestamp, seeded from 11 random bits"""
+    ms &= 2**48 - 1
+    p = uuid.UUID(int=previous)
+    fresh = (bits >> 62) & 0x7FF
+    if p.variant == uuid.RFC_4122 and p.version == 7 and ms <= previous >> 80:
+        counter = (previous >> 64) & 0xFFF
+        if counter < 0xFFF:
+            ts, counter = previous >> 80, counter + 1
+        else:
+            ts, counter = ((previous >> 80) + 1) & (2**48 - 1), fresh
+    else:
+        ts, counter = ms, fresh
+    return uuid.UUID(int=(ts << 80) | (counter << 64) | (bits & (2**62 - 1)), version=7)
+
+
 def random_bits(rng):
     """Mostly uniform 128-bit values, plus values with every interesting
     version nibble and variant pattern"""
@@ -131,15 +191,44 @@ def main():
         for text in spellings(rng, u) + single + [mutate(rng, t) for t in rng.sample(spellings(rng, u), 3)]:
 
             def check_parse(answer, text=text):
-                strict, lenient = answer.split(" ")
-                want_strict = f"ok:{str(uuid.UUID(text))}" if CANONICAL.fullmatch(text) else "err"
-                want_lenient = f"ok:{str(python_parse(text))}" if lenient_grammar(text) else "err"
-                ok = (strict == want_strict or (want_strict == "err" and strict.startswith("err:"))) and (
-                    lenient == want_lenient or (want_lenient == "err" and lenient.startswith("err:"))
-                )
-                return ok, f"{want_strict} {want_lenient}"
+                b = text.encode()
+                # Acceptance and values from Python's uuid and the grammar
+                # above, error positions from the documented rules
+                strict_err = expected_strict(b)
+                lenient_err = expected_lenient(b)
+                if CANONICAL.fullmatch(text):
+                    want_strict = f"ok:{uuid.UUID(text)}"
+                else:
+                    want_strict = f"err:{strict_err[0]}:{strict_err[1]}"
+                if lenient_grammar(text):
+                    want_lenient = f"ok:{python_parse(text)}"
+                else:
+                    want_lenient = f"err:{lenient_err[0]}:{lenient_err[1]}"
+                # The two descriptions of what's accepted must agree
+                consistent = (strict_err[0] == "ok") == bool(CANONICAL.fullmatch(text)) and (lenient_err[0] == "ok") == lenient_grammar(text)
+                return consistent and answer == f"{want_strict} {want_lenient}", f"{want_strict} {want_lenient}"
 
             cases.append((f"P {text.encode().hex()}".rstrip(), check_parse))
+
+    # v7_after against the model above, from random previous UUIDs: v7 ones
+    # around the clock reading, ones with a full or nearly full counter, and
+    # ones that aren't v7
+    for _ in range(args.count):
+        ms = rng.getrandbits(48)
+        bits = rng.getrandbits(128)
+        kind = rng.randrange(4)
+        if kind == 0:
+            previous = rng.getrandbits(128)
+        else:
+            prev_ms = (ms + rng.randrange(-3, 4)) % 2**48
+            counter = rng.choice([0xFFF, 0xFFE, rng.getrandbits(12)])
+            previous = uuid.UUID(int=(prev_ms << 80) | (counter << 64) | rng.getrandbits(64), version=7).int
+        want = str(v7_after(previous, ms, bits))
+        cases.append((f"A {previous:032x} {ms:x} {bits:032x}", lambda answer, want=want: (answer == want, want)))
+
+    # The namespaces
+    namespaces = " ".join(str(u) for u in NAMESPACES)
+    cases.append(("NS", lambda answer: (answer == namespaces, namespaces)))
 
     # Version 1, 4, 6 and 7 UUIDs Python made itself parse back the same,
     # with their timestamps for version 7
@@ -160,7 +249,10 @@ def main():
         def check_random(answer):
             random_answers.append(answer)
             u = uuid.UUID(answer)
-            return u.version == 4 and u.variant == uuid.RFC_4122, "a random v4"
+            # The high and low 64 bits come from separate draws
+            hi = (u.int >> 64) & ~(0xF << 12)
+            lo = u.int & (2**62 - 1)
+            return u.version == 4 and u.variant == uuid.RFC_4122 and hi & (2**62 - 1) != lo, "a random v4 from two draws"
 
         cases.append(("R", check_random))
 

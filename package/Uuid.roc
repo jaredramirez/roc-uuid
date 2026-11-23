@@ -10,30 +10,34 @@
 ## `random_bits!` and `random_bits` get the bits from whatever your platform
 ## or a pseudo-random generator provides.
 
-## A problem with the text given to `from_str` or `from_str_lenient`, and
-## the byte offset where it was found:
-##
-## - `InvalidChar(byte)` a byte that can't appear there.
-## - `ExpectedHyphen` a hyphen is missing at one of the four places the
-##   canonical form has one.
-## - `WrongLength` the text is too short or too long. The index is where the
-##   text ended, or the first byte past the end of a UUID.
 import md5.Md5
 import sha1.Sha1
-
-ParseErr : [InvalidUuid({ index : U64, problem : [InvalidChar(U8), ExpectedHyphen, WrongLength] })]
-
-## The version, from the 4 bits RFC 9562 sets aside for it. The nil UUID
-## reports `Other(0)` and the max UUID `Other(15)`.
-Version : [V1, V2, V3, V4, V5, V6, V7, V8, Other(U8)]
-
-## The variant, from the top bits of the 9th byte. Every UUID this package
-## makes is `Rfc9562`.
-Variant : [Ncs, Rfc9562, Microsoft, Future]
 
 Uuid :: [Bits(U128)].{
 	is_eq : _
 	to_hash : _
+
+	## A problem with the text given to `from_str` or `from_str_lenient`, and
+	## the byte offset where it was found:
+	##
+	## - `InvalidChar(byte)` a byte that can't appear there. For a character
+	##   of more than one byte, it's the character's first byte.
+	## - `ExpectedHyphen` a hyphen is missing at one of the four places the
+	##   canonical form has one.
+	## - `WrongLength` the text is too short or too long, or a `{` has no
+	##   closing `}`. The index is where the text ended, or the first byte past
+	##   the end of a UUID.
+	ParseErr : [InvalidUuid({ index : U64, problem : [InvalidChar(U8), ExpectedHyphen, WrongLength] })]
+
+	## The version, from the 4 bits RFC 9562 sets aside for it. RFC 9562 only
+	## defines versions for its own variant, so a UUID of any other variant
+	## reports `Other(n)`, as do the nil UUID (`Other(0)`) and the max UUID
+	## (`Other(15)`).
+	Version : [V1, V2, V3, V4, V5, V6, V7, V8, Other(U8)]
+
+	## The variant, from the top bits of the 9th byte. Every UUID this package
+	## makes is `Rfc9562`.
+	Variant : [Ncs, Rfc9562, Microsoft, Future]
 
 	## The nil UUID, `00000000-0000-0000-0000-000000000000`.
 	nil : Uuid
@@ -75,7 +79,7 @@ Uuid :: [Bits(U128)].{
 	## Uuid.from_str("f81d4fae-7dec-11d0-a765-00a0c91e6bf6") # Ok(...)
 	## Uuid.from_str("f81d4fae7dec11d0a76500a0c91e6bf6")     # Err(InvalidUuid({ index: 8, problem: ExpectedHyphen }))
 	## ```
-	from_str : Str -> Try(Uuid, ParseErr)
+	from_str : Str -> Try(Uuid, Uuid.ParseErr)
 	from_str = |text| parse_canonical(text.to_utf8(), 0)
 
 	## Parse the canonical form, or any of the other spellings in common use:
@@ -86,7 +90,7 @@ Uuid :: [Bits(U128)].{
 	## - 32 hexadecimal digits without hyphens
 	##
 	## Error indexes are offsets into the whole text.
-	from_str_lenient : Str -> Try(Uuid, ParseErr)
+	from_str_lenient : Str -> Try(Uuid, Uuid.ParseErr)
 	from_str_lenient = |text| {
 		bytes = text.to_utf8()
 		len = bytes.len()
@@ -129,23 +133,20 @@ Uuid :: [Bits(U128)].{
 	to_inspect : Uuid -> Str
 	to_inspect = |uuid| "Uuid(${uuid.to_str()})"
 
-	## The version, from bits 48 to 51.
-	version : Uuid -> Version
-	version = |Bits(bits)|
-		match bits.shr_zf_wrap(76).to_u8_wrap().bitwise_and(0xF) {
-			1 => V1
-			2 => V2
-			3 => V3
-			4 => V4
-			5 => V5
-			6 => V6
-			7 => V7
-			8 => V8
-			other => Other(other)
+	## The version, from bits 48 to 51. A UUID whose variant isn't `Rfc9562`
+	## reports `Other(n)`, since RFC 9562 doesn't define versions for it.
+	version : Uuid -> Uuid.Version
+	version = |uuid| {
+		nibble = uuid.to_u128().shr_zf_wrap(76).to_u8_wrap().bitwise_and(0xF)
+		if uuid.variant() != Rfc9562 {
+			Other(nibble)
+		} else {
+			version_for(nibble)
 		}
+	}
 
 	## The variant, from the top bits of byte 8.
-	variant : Uuid -> Variant
+	variant : Uuid -> Uuid.Variant
 	variant = |Bits(bits)| {
 		top = bits.shr_zf_wrap(61).to_u8_wrap().bitwise_and(0x7)
 		if top < 4 {
@@ -162,8 +163,8 @@ Uuid :: [Bits(U128)].{
 	## The Unix timestamp in milliseconds a version 7 UUID starts with.
 	unix_ms : Uuid -> Try(U64, [NotV7])
 	unix_ms = |uuid|
-		match (uuid.version(), uuid.variant()) {
-			(V7, Rfc9562) => Ok(uuid.to_u128().shr_zf_wrap(80).to_u64_wrap())
+		match uuid.version() {
+			V7 => Ok(uuid.to_u128().shr_zf_wrap(80).to_u64_wrap())
 			_ => Err(NotV7)
 		}
 
@@ -182,8 +183,10 @@ Uuid :: [Bits(U128)].{
 	## use `v7_after` to also keep order within a millisecond.
 	##
 	## Only the low 48 bits of `ms` fit, which covers dates until the year
-	## 10889. The random bits are the low 80 bits of `bits`, with the version
-	## and variant positions replaced.
+	## 10889. Anything above them is dropped without an error, so make sure
+	## `ms` really is milliseconds. Nanoseconds or seconds give a wrong but
+	## valid-looking timestamp. The random bits are the low 80 bits of `bits`,
+	## with the version and variant positions replaced.
 	v7 : U64, U128 -> Uuid
 	v7 = |ms, bits| {
 		time = ms.to_u128().bitwise_and(0xFFFF_FFFF_FFFF).shl_wrap(80)
@@ -200,6 +203,12 @@ Uuid :: [Bits(U128)].{
 	## that leaves room to count. Otherwise it keeps the timestamp of
 	## `previous` and adds 1 to its counter, moving to the next millisecond if
 	## the counter is full.
+	##
+	## Because it always sorts after `previous`, a `previous` from the future
+	## (from a clock that was ahead, another machine, or a timestamp in the
+	## wrong unit) holds every later UUID at that future time. Only pass a
+	## `previous` you made yourself or otherwise trust. It wraps around to the
+	## start of the range only after the last millisecond of the year 10889.
 	##
 	## ```roc
 	## var $last = Uuid.nil
@@ -294,6 +303,14 @@ Uuid :: [Bits(U128)].{
 	}
 
 	## Compare in RFC 9562 byte order, which for version 7 is creation order.
+	## This is what `List.sort` uses.
+	order_relative_to : Uuid, Uuid -> [Before, Same, After]
+	order_relative_to = |a, b| {
+		x = a.to_u128()
+		y = b.to_u128()
+		if (x < y) Before else if (x > y) After else Same
+	}
+
 	is_lt : Uuid, Uuid -> Bool
 	is_lt = |a, b| a.to_u128() < b.to_u128()
 
@@ -308,6 +325,20 @@ Uuid :: [Bits(U128)].{
 }
 
 # Everything below is private to this module
+
+version_for : U8 -> Uuid.Version
+version_for = |nibble|
+	match nibble {
+		1 => V1
+		2 => V2
+		3 => V3
+		4 => V4
+		5 => V5
+		6 => V6
+		7 => V7
+		8 => V8
+		other => Other(other)
+	}
 
 ## `bits` with the 4 version bits set to `version` and the 2 variant bits
 ## set to `10`
@@ -371,7 +402,7 @@ has_urn_prefix = |bytes|
 ## Parse the canonical form or 32 hexadecimal digits, choosing by whether a
 ## hyphen comes after the first 8 digits. `offset` is where `bytes` starts in
 ## the whole text, for error indexes.
-parse_any : List(U8), U64 -> Try(Uuid, ParseErr)
+parse_any : List(U8), U64 -> Try(Uuid, Uuid.ParseErr)
 parse_any = |bytes, offset|
 	if bytes.get(8) == Ok('-') {
 		parse_canonical(bytes, offset)
@@ -380,7 +411,7 @@ parse_any = |bytes, offset|
 	}
 
 ## Parse exactly 36 bytes of canonical form
-parse_canonical : List(U8), U64 -> Try(Uuid, ParseErr)
+parse_canonical : List(U8), U64 -> Try(Uuid, Uuid.ParseErr)
 parse_canonical = |bytes, offset| {
 	var $bits = 0.U128
 	var $index = 0.U64
@@ -416,7 +447,7 @@ parse_canonical = |bytes, offset| {
 }
 
 ## Parse exactly 32 hexadecimal digits
-parse_hex : List(U8), U64 -> Try(Uuid, ParseErr)
+parse_hex : List(U8), U64 -> Try(Uuid, Uuid.ParseErr)
 parse_hex = |bytes, offset| {
 	var $bits = 0.U128
 	var $index = 0.U64
@@ -541,11 +572,13 @@ expect
 		|(byte, variant)| Uuid.from_u128(byte.to_u128().shl_wrap(56)).variant() == variant,
 	)
 
-# Every version nibble
+# Every version nibble, for the RFC variant, and `Other` for every other variant
 expect
 	List.from_iter((0.U8).until(16)).all(
 		|n| {
-			v = Uuid.from_u128(n.to_u128().shl_wrap(76)).version()
+			nibble = n.to_u128().shl_wrap(76)
+			others = [0x0.U128, 0x4, 0xC, 0xE].all(|top| Uuid.from_u128(nibble.bitwise_or(top.shl_wrap(60))).version() == Other(n))
+			v = Uuid.from_u128(nibble.bitwise_or(0x8000_0000_0000_0000)).version()
 			expected = match n {
 				1 => V1
 				2 => V2
@@ -557,9 +590,89 @@ expect
 				8 => V8
 				_ => Other(n)
 			}
-			v == expected
+			v == expected and others
 		},
 	)
+
+# A non-RFC UUID with a 7 in the version nibble has no timestamp
+expect Uuid.from_u128(0x017F_22E2_79B0_7CC3_C8C4_DC0C_0C07_398F).unix_ms() == Err(NotV7)
+
+# The four namespaces from RFC 9562 section 6.6
+expect Uuid.namespace_dns.to_str() == "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+
+expect Uuid.namespace_url.to_str() == "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+
+expect Uuid.namespace_oid.to_str() == "6ba7b812-9dad-11d1-80b4-00c04fd430c8"
+
+expect Uuid.namespace_x500.to_str() == "6ba7b814-9dad-11d1-80b4-00c04fd430c8"
+
+# v3 and v5 in every namespace, checked against Python's uuid3 and uuid5
+expect Uuid.v5(Uuid.namespace_url, "https://example.com/".to_utf8()).to_str() == "dd2c1780-811a-5296-81c5-178a0ef488bc"
+
+expect Uuid.v5(Uuid.namespace_oid, "1.3.6.1".to_utf8()).to_str() == "1447fa61-5277-5fef-a9b3-fbc6e44f4af3"
+
+expect Uuid.v5(Uuid.namespace_x500, "cn=John Doe,o=Acme".to_utf8()).to_str() == "56427d5b-cb4e-5e1f-a034-040025b6d964"
+
+expect Uuid.v3(Uuid.namespace_url, "https://example.com/".to_utf8()).to_str() == "b9dcdff8-af4a-365d-8043-0f8361942709"
+
+# from_bytes takes exactly 16 bytes
+expect Uuid.from_bytes(List.repeat(1, 17)) == Err(WrongLength(17))
+
+expect Uuid.from_bytes(List.repeat(1, 15)) == Err(WrongLength(15))
+
+# Ordering is strict, and List.sort sorts by it
+expect !(Uuid.nil < Uuid.nil) and !(Uuid.max > Uuid.max) and Uuid.nil <= Uuid.nil
+
+expect [Uuid.max, Uuid.nil, Uuid.v7(5, 0), Uuid.v7(4, 0)].sort() == [Uuid.nil, Uuid.v7(4, 0), Uuid.v7(5, 0), Uuid.max]
+
+# A 32-digit form with more after it reports where the UUID ends
+expect Uuid.from_str_lenient("f81d4fae7dec11d0a76500a0c91e6bf60") == Err(InvalidUuid({ index: 32, problem: WrongLength }))
+
+# random_bits takes two fresh draws for each call, high then low
+expect {
+	g0 = gen(11)
+	(a, g1) = g0.step()
+	(b, g2) = g1.step()
+	(c, g3) = g2.step()
+	(d, _) = g3.step()
+	(first, after_first) = Uuid.random_bits(g0)
+	(second, _) = Uuid.random_bits(after_first)
+	first == join(a, b) and second == join(c, d)
+}
+
+# v7_after adds exactly 1 to the counter it reads, up to the last value
+expect {
+	base = Uuid.v7(5000, 0).to_u128()
+	[0x000, 0x5A5, 0x800, 0xFFE].all(
+		|counter| {
+			previous = Uuid.from_u128(base.bitwise_or(counter.shl_wrap(64)))
+			next = Uuid.v7_after(previous, 5000, 0)
+			next.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF) == counter + 1 and next.unix_ms() == Ok(5000)
+		},
+	)
+}
+
+# After a full counter: the next millisecond, and a fresh counter below 0x800
+expect {
+	full = Uuid.from_u128(Uuid.v7(5000, 0).to_u128().bitwise_or((0xFFF.U128).shl_wrap(64)))
+	next = Uuid.v7_after(full, 5000, Uuid.max.to_u128())
+	counter = next.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF)
+	next.unix_ms() == Ok(5001) and counter == 0x7FF
+}
+
+# The fresh counter comes from the 11 bits above rand_b, not from rand_b
+expect {
+	only_rand_b = Uuid.v7_after(Uuid.nil, 5000, 0x3FFF_FFFF_FFFF_FFFF)
+	only_counter = Uuid.v7_after(Uuid.nil, 5000, (0x7FF.U128).shl_wrap(62))
+	only_rand_b.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF) == 0
+		and only_counter.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF) == 0x7FF
+		and only_counter.to_u128().bitwise_and(0x3FFF_FFFF_FFFF_FFFF) == 0
+}
+
+# v7_after keeps all 48 bits of the time
+expect Uuid.v7_after(Uuid.nil, 0xFFFF_FFFF_FF00, 0).unix_ms() == Ok(0xFFFF_FFFF_FF00)
+
+expect Uuid.v7_after(Uuid.v7(0xF000_0000_0000, 0), 0xF000_0000_0001, 0).unix_ms() == Ok(0xF000_0000_0001)
 
 # v4, v7 and v8 always set their version and the RFC variant, and keep every
 # other bit they're given
