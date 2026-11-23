@@ -6,9 +6,8 @@
 ## creation time), `v8` (your own layout), or `v3` and `v5` (derived from a name).
 ##
 ## This package never reads a clock or a random number generator itself, so
-## it works on every platform. You pass in random bits and timestamps, and
-## `random!` and `random` get the bits from whatever your platform or a
-## pseudo-random generator provides.
+## it works on every platform. You pass in timestamps, and a `Gen` gets random
+## bits from whatever your platform or a pseudo-random generator provides.
 
 import md5.Md5
 import sha1.Sha1
@@ -168,13 +167,12 @@ Uuid :: [Bits(U128)].{
 			_ => Err(NotV7)
 		}
 
-	## Random bits for `v4`, `v7` and `next_v7`. Get them from `random!`
-	## with your platform's randomness or from `random` with a pseudo-random
-	## generator, and use fresh bits for every UUID, since UUIDs made from
-	## the same bits share them.
+	## Random bits for `v4`, `v7` and `next_v7`. A `Uuid.Gen` makes them
+	## for you; `from_bits` takes bits you already have. Use fresh bits for
+	## every UUID, since UUIDs made from the same bits share them.
 	##
 	## ```roc
-	## id = Uuid.random!(Random.seed_u64!)?.v4()
+	## id = Uuid.Random.from_bits(0x1234_5678_9ABC_DEF0_1234_5678_9ABC_DEF0).v4()
 	## ```
 	Random :: [Random(U128)].{
 
@@ -188,9 +186,6 @@ Uuid :: [Bits(U128)].{
 		## A version 4 UUID: 122 random bits. The 6 bits at the version and
 		## variant positions are replaced.
 		##
-		## ```roc
-		## id = Uuid.random!(Random.seed_u64!)?.v4()
-		## ```
 		v4 : Random -> Uuid
 		v4 = |Random(bits)| with_version(bits, 4)
 
@@ -208,7 +203,7 @@ Uuid :: [Bits(U128)].{
 		##
 		## ```roc
 		## now = Utc.now!().to_millis_since_epoch()
-		## id = Uuid.random!(Random.seed_u64!)?.v7(now)
+		## id = Uuid.Gen.system(Random.seed_u64!).v7!(now)?
 		## ```
 		v7 : Random, n -> Uuid where [n.to_u64_try : n -> Try(U64, e)]
 		v7 = |Random(bits), ms| {
@@ -236,7 +231,7 @@ Uuid :: [Bits(U128)].{
 	##
 	## ```roc
 	## var $last = Uuid.nil
-	## $last = $last.next_v7(now, Uuid.random!(Random.seed_u64!)?)
+	## $last = $last.next_v7(now, gen.random!()?)
 	## ```
 	next_v7 : Uuid, n, Random -> Uuid where [n.to_u64_try : n -> Try(U64, e)]
 	next_v7 = |previous, ms, Random(bits)| {
@@ -298,34 +293,89 @@ Uuid :: [Bits(U128)].{
 	namespace_x500 : Uuid
 	namespace_x500 = Bits(0x6ba7_b814_9dad_11d1_80b4_00c0_4fd4_30c8)
 
-	## Random bits from an effectful source of 64-bit numbers, such as
-	## basic-cli's `Random.seed_u64!`, which reads the operating system's
-	## secure random number generator. Its error passes through.
+	## Where random bits come from: your platform's randomness with `system`,
+	## or a pure pseudo-random generator with `seeded`. Make one and reuse
+	## it for every UUID.
 	##
 	## ```roc
-	## id = Uuid.random!(Random.seed_u64!)?.v4()
+	## gen = Uuid.Gen.system(Random.seed_u64!)
+	## id = gen.v4!()?
 	## ```
-	random! : (() => Try(U64, err)) => Try(Random, err)
-	random! = |next!| {
-		hi = next!()?
-		lo = next!()?
-		Ok(Random(join(hi, lo)))
-	}
+	Gen :: [].{
 
-	## Random bits from a pure pseudo-random generator, and the generator to
-	## use next. Works with any generator that has a `step : g -> (U64, g)`
-	## method, such as roc-prng's `Seed`.
-	##
-	## ```roc
-	## var $seed = Prng.seed(Random.seed_u64!()?)
-	## (bits, $seed) = Uuid.random($seed)
-	## id = bits.v4()
-	## ```
-	random : g -> (Random, g) where [g.step : g -> (U64, g)]
-	random = |generator| {
-		(hi, after_hi) = generator.step()
-		(lo, after_lo) = after_hi.step()
-		(Random(join(hi, lo)), after_lo)
+		## Random bits from an effectful source of 64-bit numbers, such as
+		## basic-cli's `Random.seed_u64!`, which reads the operating system's
+		## secure random number generator, as RFC 9562 recommends. Its error
+		## passes through.
+		##
+		## ```roc
+		## gen = Uuid.Gen.system(Random.seed_u64!)
+		## id = gen.v4!()?
+		## sorted_id = gen.v7!(now)?
+		## ```
+		system : (() => Try(U64, err)) -> Uuid.Gen.System(err)
+		system = |next!| System.{ next! }
+
+		## Random bits from a pure pseudo-random generator with a
+		## `step : g -> (U64, g)` method, such as roc-prng's `Seed`. Each call
+		## gives back the generator to use next.
+		##
+		## ```roc
+		## var $gen = Uuid.Gen.seeded(Prng.seed(Random.seed_u64!()?))
+		## (id, $gen) = $gen.v4()
+		## (sorted_id, $gen) = $gen.v7(now)
+		## ```
+		seeded : g -> Uuid.Gen.Seeded(g)
+		seeded = |generator| Seeded.{ generator }
+
+		## A generator from `Uuid.Gen.system`
+		System(err) :: { next! : () => Try(U64, err) }.{
+
+			## A version 4 UUID, as `Uuid.Random.v4`
+			v4! : Uuid.Gen.System(err) => Try(Uuid, err)
+			v4! = |gen| Ok(gen.random!()?.v4())
+
+			## A version 7 UUID, as `Uuid.Random.v7`
+			v7! : Uuid.Gen.System(err), n => Try(Uuid, err) where [n.to_u64_try : n -> Try(U64, e)]
+			v7! = |gen, ms| Ok(gen.random!()?.v7(ms))
+
+			## Fresh random bits, such as for `next_v7`
+			random! : Uuid.Gen.System(err) => Try(Uuid.Random, err)
+			random! = |gen| {
+				hi = (gen.next!)()?
+				lo = (gen.next!)()?
+				Ok(Uuid.Random.from_bits(join(hi, lo)))
+			}
+		}
+
+		## A generator from `Uuid.Gen.seeded`
+		Seeded(g) :: { generator : g }.{
+
+			## A version 4 UUID, as `Uuid.Random.v4`, and the generator to use
+			## next
+			v4 : Uuid.Gen.Seeded(g) -> (Uuid, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g)]
+			v4 = |gen| {
+				(bits, next) = gen.random()
+				(bits.v4(), next)
+			}
+
+			## A version 7 UUID, as `Uuid.Random.v7`, and the generator to use
+			## next
+			v7 : Uuid.Gen.Seeded(g), n -> (Uuid, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g), n.to_u64_try : n -> Try(U64, e)]
+			v7 = |gen, ms| {
+				(bits, next) = gen.random()
+				(bits.v7(ms), next)
+			}
+
+			## Fresh random bits, such as for `next_v7`, and the generator to
+			## use next
+			random : Uuid.Gen.Seeded(g) -> (Uuid.Random, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g)]
+			random = |{ generator }| {
+				(hi, after_hi) = generator.step()
+				(lo, after_lo) = after_hi.step()
+				(Uuid.Random.from_bits(join(hi, lo)), Seeded.{ generator: after_lo })
+			}
+		}
 	}
 
 	## Compare in RFC 9562 byte order, which for version 7 is creation order.
@@ -526,27 +576,26 @@ parse = |text|
 
 ## A tiny deterministic generator for the property tests (SplitMix64), with
 ## the same `step` shape as roc-prng's `Seed`
-Gen := [Gen(U64)].{
-	step : Gen -> (U64, Gen)
-	step = |Gen(state)| {
+SplitMix := [SplitMix(U64)].{
+	step : SplitMix -> (U64, SplitMix)
+	step = |SplitMix(state)| {
 		next = state.plus_wrap(0x9E37_79B9_7F4A_7C15)
 		z1 = next.bitwise_xor(next.shr_zf_wrap(30)).times_wrap(0xBF58_476D_1CE4_E5B9)
 		z2 = z1.bitwise_xor(z1.shr_zf_wrap(27)).times_wrap(0x94D0_49BB_1331_11EB)
-		(z2.bitwise_xor(z2.shr_zf_wrap(31)), Gen(next))
+		(z2.bitwise_xor(z2.shr_zf_wrap(31)), SplitMix(next))
 	}
 }
 
-gen : U64 -> Gen
-gen = |seed| Gen(seed)
+split_mix : U64 -> SplitMix
+split_mix = |seed| SplitMix(seed)
 
 ## `count` pseudo-random 128-bit values
 samples : U64, U64 -> List(U128)
 samples = |count, seed| {
-	var $gen = gen(seed)
+	var $gen = Uuid.Gen.seeded(split_mix(seed))
 	var $out = []
 	for _ in List.from_iter((0.U64).until(count)) {
-		(bits, next) = Uuid.random($gen)
-		$gen = next
+		(bits, $gen) = $gen.random()
 		$out = $out.append(bits.to_bits())
 	}
 	$out
@@ -667,16 +716,28 @@ expect [Uuid.max, Uuid.nil, rand(0).v7(5), rand(0).v7(4)].sort() == [Uuid.nil, r
 # A 32-digit form with more after it reports where the UUID ends
 expect Uuid.from_str_lenient("f81d4fae7dec11d0a76500a0c91e6bf60") == Err(InvalidUuid({ index: 32, problem: WrongLength }))
 
-# random takes two fresh draws for each call, high then low
+# A seeded Gen takes two fresh draws for each call, high then low
 expect {
-	g0 = gen(11)
+	g0 = split_mix(11)
 	(a, g1) = g0.step()
 	(b, g2) = g1.step()
 	(c, g3) = g2.step()
 	(d, _) = g3.step()
-	(first, after_first) = Uuid.random(g0)
-	(second, _) = Uuid.random(after_first)
+	(first, after_first) = Uuid.Gen.seeded(g0).random()
+	(second, _) = after_first.random()
 	first.to_bits() == join(a, b) and second.to_bits() == join(c, d)
+}
+
+# A seeded Gen's v4 and v7 use the same bits as random, and move on
+expect {
+	gen = Uuid.Gen.seeded(split_mix(12))
+	(bits, after_bits) = gen.random()
+	(next_bits, _) = after_bits.random()
+	(a, after_a) = gen.v4()
+	(b, after_b) = gen.v7(5000)
+	(a_next, _) = after_a.v4()
+	(b_next, _) = after_b.v7(5000)
+	a == bits.v4() and b == bits.v7(5000) and a_next == next_bits.v4() and b_next == next_bits.v7(5000)
 }
 
 # next_v7 adds exactly 1 to the counter it reads, up to the last value
@@ -825,14 +886,14 @@ expect Str.inspect(Uuid.nil) == "Uuid(00000000-0000-0000-0000-000000000000)"
 # next_v7: strictly increasing over random steps of the clock, including
 # repeats and going backwards, and always a v7 with a sensible timestamp
 expect {
-	var $gen = gen(7)
+	var $mix = split_mix(7)
+	var $gen = Uuid.Gen.seeded(split_mix(8))
 	var $last = Uuid.nil
 	var $ms = 1_700_000_000_000.U64
 	var $ok = True
 	for _ in List.from_iter((0.U64).until(3000)) {
-		(r, after_r) = $gen.step()
-		(bits, after_bits) = Uuid.random(after_r)
-		$gen = after_bits
+		(r, $mix) = $mix.step()
+		(bits, $gen) = $gen.random()
 		# Mostly the same millisecond, sometimes forward, sometimes backward
 		$ms =
 			match r % 10 {

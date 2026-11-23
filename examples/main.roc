@@ -12,13 +12,16 @@ import uuid.Uuid
 
 ## Every example from the README, so CI checks that they compile and run
 main! = |_args| {
+	# Random bits from the operating system
+	gen = Uuid.Gen.system(Random.seed_u64!)
+
 	# Version 4: random
-	id = Uuid.random!(Random.seed_u64!)?.v4()
+	id = gen.v4!()?
 	Stdout.line!("v4: ${id.to_str()}")?
 
 	# Version 7: random, but sorted by time
 	now = Utc.now!().to_millis_since_epoch()
-	sorted_id = Uuid.random!(Random.seed_u64!)?.v7(now)
+	sorted_id = gen.v7!(now)?
 	Stdout.line!("v7: ${sorted_id.to_str()}")?
 
 	# Parse one from text
@@ -26,16 +29,15 @@ main! = |_args| {
 	Stdout.line!("parsed: ${parsed.to_str()}")?
 
 	# A pure generator, seeded from the platform's randomness
-	var $seed = Prng.seed(Random.seed_u64!()?)
-	(first, $seed) = Uuid.random($seed)
-	(second, $seed) = Uuid.random($seed)
-	Stdout.line!("seeded v4s: ${first.v4().to_str()} ${second.v4().to_str()}")?
+	var $gen = Uuid.Gen.seeded(Prng.seed(Random.seed_u64!()?))
+	(first, $gen) = $gen.v4()
+	(second, $gen) = $gen.v4()
+	Stdout.line!("seeded v4s: ${first.to_str()} ${second.to_str()}")?
 
 	# Version 7 in order within a millisecond
 	var $last = Uuid.nil
 	for _ in List.from_iter((0.U64).until(3)) {
-		row_bits = Uuid.random!(Random.seed_u64!)?
-		$last = $last.next_v7(now, row_bits)
+		$last = $last.next_v7(now, gen.random!()?)
 		Stdout.line!($last.to_str())?
 	}
 

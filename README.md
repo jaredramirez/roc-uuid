@@ -27,13 +27,16 @@ import pf.Utc
 import uuid.Uuid
 
 main! = |_args| {
+	# Random bits from the operating system
+	gen = Uuid.Gen.system(Random.seed_u64!)
+
 	# Version 4: random
-	id = Uuid.random!(Random.seed_u64!)?.v4()
+	id = gen.v4!()?
 	Stdout.line!("v4: ${id.to_str()}")?
 
 	# Version 7: random, but sorted by time
 	now = Utc.now!().to_millis_since_epoch()
-	sorted_id = Uuid.random!(Random.seed_u64!)?.v7(now)
+	sorted_id = gen.v7!(now)?
 	Stdout.line!("v7: ${sorted_id.to_str()}")?
 
 	# Parse one from text
@@ -48,38 +51,39 @@ main! = |_args| {
 
 ### Randomness and time
 
-This package never asks the platform for anything. You give it random bits
-and the time, so it works the same on every platform and in tests.
+This package never asks the platform for anything. You give it a source of
+random numbers and the time, so it works the same on every platform and in
+tests.
 
-Use fresh random bits for every UUID. Reusing them makes UUIDs share bits,
-so one gives away part of another.
-
-Random bits are a `Uuid.Random`, and `v4` and `v7` are methods on it.
-There are two ways to get one. With an effectful source, such as basic-cli's
-`Random.seed_u64!`, pass the function to `random!` and its error passes
-through. This is the one to use for IDs, because basic-cli reads the
-operating system's secure random number generator, as RFC 9562 recommends.
+A `Uuid.Gen` holds the source of random numbers. Make one and reuse it for
+every UUID. With an effectful source, such as basic-cli's `Random.seed_u64!`,
+use `Uuid.Gen.system`, and the source's error passes through. This is the
+one to use for IDs, because basic-cli reads the operating system's secure
+random number generator, as RFC 9562 recommends.
 
 ```roc
-id = Uuid.random!(Random.seed_u64!)?.v4()
+gen = Uuid.Gen.system(Random.seed_u64!)
+id = gen.v4!()?
 ```
 
 With a pure generator, such as [roc-prng](https://github.com/niclas-ahden/roc-prng)'s
-`Seed`, thread it through a mutable variable. Any type with a
+`Seed`, use `Uuid.Gen.seeded`. Each UUID comes back with the generator to
+use next, so keep it in a mutable variable. Any type with a
 `step : g -> (U64, g)` method works. Seed it from the platform's randomness,
 not the clock, since two processes seeded at the same moment would make the
 same UUIDs. roc-prng's generator isn't cryptographically secure, so prefer
-`random!` when UUIDs must be hard to guess.
+`Uuid.Gen.system` when UUIDs must be hard to guess.
 
 ```roc
 import prng.Random as Prng
 
-var $seed = Prng.seed(Random.seed_u64!()?)
-(first, $seed) = Uuid.random($seed)
-(second, $seed) = Uuid.random($seed)
+var $gen = Uuid.Gen.seeded(Prng.seed(Random.seed_u64!()?))
+(first, $gen) = $gen.v4()
+(second, $gen) = $gen.v4()
 ```
 
-`Uuid.Random.from_bits` takes any `U128`, which is handy in tests.
+For fixed bits, such as in tests, `Uuid.Random.from_bits` takes a `U128`,
+and `v4` and `v7` are methods on it.
 
 Timestamps are Unix milliseconds, in any integer type from `U64` up, so
 basic-cli's `Utc.now!().to_millis_since_epoch()` works as it is. Only 48
@@ -90,8 +94,8 @@ wrong but valid-looking UUID. A time before 1970 counts as 0.
 ### Making UUIDs
 
 ```roc
-bits.v4()                     # 122 random bits
-bits.v7(unix_ms)              # the time in milliseconds, then 74 random bits
+gen.v4!()?                    # 122 random bits
+gen.v7!(unix_ms)?             # the time in milliseconds, then 74 random bits
 Uuid.v8(your_bits)            # your own 122 bits, from a U128
 Uuid.v5(Uuid.namespace_dns, "www.example.com".to_utf8())
 Uuid.v3(Uuid.namespace_dns, "www.example.com".to_utf8())
@@ -113,8 +117,7 @@ timestamp, following RFC 9562 section 6.2, method 1.
 ```roc
 var $last = Uuid.nil
 for _ in rows {
-	bits = Uuid.random!(Random.seed_u64!)?
-	$last = $last.next_v7(now, bits)
+	$last = $last.next_v7(now, gen.random!()?)
 	# ...
 }
 ```
@@ -190,7 +193,7 @@ the documented forms, read them as Python does, and report each error at
 the position and with the problem the documented rules give. It compares
 `next_v7` with a separate model of RFC 9562 method 1, from previous UUIDs
 around the clock and with full counters. Then it parses UUIDs Python made
-itself, checks the namespaces, and checks that `random!` gives distinct
+itself, checks the namespaces, and checks that `Uuid.Gen.system` gives distinct
 version 4 UUIDs from two separate draws. CI runs 5000 inputs.
 
 The [roc-fuzz](https://github.com/lukewilliamboswell/roc-fuzz) target parses
