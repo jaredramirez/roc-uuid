@@ -13,7 +13,7 @@ import uuid.Uuid
 ## Every example from the README, so CI checks that they compile and run
 main! = |_args| {
 	# Random bits from the operating system
-	gen = Uuid.Gen.system(Random.seed_u64!)
+	gen = Uuid.SystemGen.new(Random.seed_u64!)
 
 	# Version 4: random
 	id = gen.v4!()?
@@ -29,7 +29,7 @@ main! = |_args| {
 	Stdout.line!("parsed: ${parsed.to_str()}")?
 
 	# A pure generator, seeded from the platform's randomness
-	var $gen = Uuid.Gen.seeded(Prng.seed(Random.seed_u64!()?))
+	var $gen = Uuid.SeededGen.new(Prng.seed(Random.seed_u64!()?))
 	(first, $gen) = $gen.v4()
 	(second, $gen) = $gen.v4()
 	Stdout.line!("seeded v4s: ${first.to_str()} ${second.to_str()}")?
@@ -37,7 +37,7 @@ main! = |_args| {
 	# Version 7 in order within a millisecond
 	var $last = Uuid.nil
 	for _ in List.from_iter((0.U64).until(3)) {
-		$last = $last.next_v7(now, gen.random!()?)
+		$last = gen.next_v7!($last, now)?
 		Stdout.line!($last.to_str())?
 	}
 

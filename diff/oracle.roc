@@ -19,7 +19,7 @@ import uuid.Uuid
 ## - `P <text>`: `from_str` and `from_str_lenient` of the text
 ## - `A <previous> <ms> <bits>`: `next_v7`
 ## - `NS`: the four namespaces
-## - `R`: a `v4` from `Uuid.Gen.system` with the platform's randomness
+## - `R`: a `v4` from `Uuid.SystemGen` with the platform's randomness
 main! = |_args| {
 	input = Stdin.read_to_end!()?
 	var $out = []
@@ -60,10 +60,10 @@ answer! = |words|
 			"${result_str(Uuid.from_str(text))} ${result_str(Uuid.from_str_lenient(text))}"
 		}
 		["P"] => "${result_str(Uuid.from_str(""))} ${result_str(Uuid.from_str_lenient(""))}"
-		["A", previous_hex, ms_hex, bits_hex] => Uuid.from_u128(hex_u128(previous_hex)).next_v7(hex_u128(ms_hex).to_u64_wrap(), Uuid.Random.from_bits(hex_u128(bits_hex))).to_str()
+		["A", previous_hex, ms_hex, bits_hex] => Uuid.Random.from_bits(hex_u128(bits_hex)).next_v7(Uuid.from_u128(hex_u128(previous_hex)), hex_u128(ms_hex).to_u64_wrap()).to_str()
 		["NS"] => [Uuid.namespace_dns, Uuid.namespace_url, Uuid.namespace_oid, Uuid.namespace_x500].map(|u| u.to_str()) |> Str.join_with(" ")
 		["R"] =>
-			match Uuid.Gen.system(Random.seed_u64!).v4!() {
+			match Uuid.SystemGen.new(Random.seed_u64!).v4!() {
 				Ok(uuid) => uuid.to_str()
 				Err(_) => "random-error"
 			}

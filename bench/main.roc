@@ -18,7 +18,7 @@ main! = |_args| {
 		("from_str_lenient", best!(|{}| texts.fold(0, |n, t| n.plus_wrap((Uuid.from_str_lenient(t) ?? Uuid.nil).to_u128().to_u64_wrap())))),
 		("to_str", best!(|{}| ids.fold(0, |n, id| n + id.to_str().count_utf8_bytes()))),
 		("v4", best!(|{}| ids.fold(0, |n, id| n.plus_wrap(Uuid.Random.from_bits(id.to_u128()).v4().to_u128().to_u64_wrap())))),
-		("next_v7", best!(|{}| ids.fold(Uuid.nil, |last, id| last.next_v7(1_700_000_000_000, Uuid.Random.from_bits(id.to_u128()))).to_u128().to_u64_wrap())),
+		("next_v7", best!(|{}| ids.fold(Uuid.nil, |last, id| Uuid.Random.from_bits(id.to_u128()).next_v7(last, 1_700_000_000_000)).to_u128().to_u64_wrap())),
 		("v3", best!(|{}| ids.fold(0, |n, id| n.plus_wrap(Uuid.v3(id, name).to_u128().to_u64_wrap())))),
 	]
 	for (label, ns) in rows {

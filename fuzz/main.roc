@@ -48,7 +48,7 @@ test! = |{ data, previous, ms }| {
 
 	# next_v7 moves forward, except past the last millisecond in the year 10889
 	before = Uuid.from_u128(previous)
-	after = before.next_v7(ms, random)
+	after = random.next_v7(before, ms)
 	at_the_end = before.unix_ms() == Ok(0xFFFF_FFFF_FFFF) and previous.shr_zf_wrap(64).bitwise_and(0xFFF) == 0xFFF
 	if after.version() != V7 or after.variant() != Rfc9562 {
 		crash "next_v7 made something other than a v7"
