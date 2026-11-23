@@ -169,7 +169,6 @@ def main():
                 str(uuid.UUID(int=n, version=4)),
                 str(uuid.UUID(int=((ms & (2**48 - 1)) << 80) | (n & (2**80 - 1)), version=7)),
                 str(uuid.uuid8(n >> 80, (n >> 64) & 0xFFF, n & (2**62 - 1))),
-                str(uuid.uuid8(n >> 80, (n >> 64) & 0xFFF, n & (2**62 - 1))),
             ]
             return answer.split(" ") == want, " ".join(want)
 

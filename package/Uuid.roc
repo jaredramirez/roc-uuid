@@ -173,6 +173,40 @@ Uuid :: [Bits(U128)].{
 	v8_from : U128 -> Uuid
 	v8_from = |bits| with_version(bits, 8)
 
+	## A version 4 UUID from random bits you already have, such as from
+	## another source or a test. The 6 bits at the version and variant
+	## positions are replaced. A `Gen`'s `v4` gets the bits for you.
+	v4_from : U128 -> Uuid
+	v4_from = |bits| with_version(bits, 4)
+
+	## A version 7 UUID from random bits you already have: the time in `ms`,
+	## as for `Gen.Sys.v7!`, then the low 80 bits of `bits` with the version
+	## and variant positions replaced.
+	v7_from : U128, n -> Uuid where [n.to_u64_try : n -> Try(U64, e)]
+	v7_from = |bits, ms| {
+		time = to_ms(ms).to_u128().bitwise_and(0xFFFF_FFFF_FFFF).shl_wrap(80)
+		with_version(time.bitwise_or(bits.bitwise_and(low_80_bits)), 7)
+	}
+
+	## A version 7 UUID that sorts after `previous`, from random bits you
+	## already have, as `Gen.Sys.next_v7!` describes
+	next_v7_from : U128, Uuid, n -> Uuid where [n.to_u64_try : n -> Try(U64, e)]
+	next_v7_from = |bits, previous, ms| {
+		time = to_ms(ms).bitwise_and(0xFFFF_FFFF_FFFF)
+		match previous.unix_ms() {
+			Ok(previous_ms) if time <= previous_ms => {
+				counter = previous.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF)
+				if counter < 0xFFF {
+					v7_parts(previous_ms, counter + 1, bits)
+				} else {
+					# Wraps to 0 only after the year 10889
+					v7_parts(previous_ms.plus_wrap(1).bitwise_and(0xFFFF_FFFF_FFFF), fresh_counter(bits), bits)
+				}
+			}
+			_ => v7_parts(time, fresh_counter(bits), bits)
+		}
+	}
+
 	## A version 3 UUID: the MD5 hash of `namespace` followed by `name`, so the
 	## same name in the same namespace always gives the same UUID. RFC 9562
 	## prefers `v5`; use `v3` when you need to match existing version 3 IDs.
@@ -240,7 +274,7 @@ Uuid :: [Bits(U128)].{
 
 			## A version 4 UUID: 122 random bits.
 			v4! : Uuid.Gen.Sys(err) => Try(Uuid, err)
-			v4! = |gen| Ok(make_v4(draw_sys!(gen)?))
+			v4! = |gen| Ok(Uuid.v4_from(draw_sys!(gen)?))
 
 			## A version 7 UUID: the Unix timestamp in milliseconds, then 74
 			## random bits. UUIDs made in different milliseconds sort by when
@@ -260,7 +294,7 @@ Uuid :: [Bits(U128)].{
 			## sorted_id = gen.v7!(now)?
 			## ```
 			v7! : Uuid.Gen.Sys(err), n => Try(Uuid, err) where [n.to_u64_try : n -> Try(U64, e)]
-			v7! = |gen, ms| Ok(make_v7(draw_sys!(gen)?, ms))
+			v7! = |gen, ms| Ok(Uuid.v7_from(draw_sys!(gen)?, ms))
 
 			## A version 7 UUID that sorts after `previous`, even when it's made
 			## in the same millisecond or the clock has gone backwards,
@@ -285,7 +319,7 @@ Uuid :: [Bits(U128)].{
 			## $last = gen.next_v7!($last, now)?
 			## ```
 			next_v7! : Uuid.Gen.Sys(err), Uuid, n => Try(Uuid, err) where [n.to_u64_try : n -> Try(U64, e)]
-			next_v7! = |gen, previous, ms| Ok(make_next_v7(draw_sys!(gen)?, previous, ms))
+			next_v7! = |gen, previous, ms| Ok(Uuid.next_v7_from(draw_sys!(gen)?, previous, ms))
 
 			## A version 8 UUID: 122 random bits. Use `Uuid.v8_from` to lay
 			## out your own.
@@ -312,7 +346,7 @@ Uuid :: [Bits(U128)].{
 			v4 : Uuid.Gen.Seeded(g) -> (Uuid, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g)]
 			v4 = |gen| {
 				(bits, next) = draw_seeded(gen)
-				(make_v4(bits), next)
+				(Uuid.v4_from(bits), next)
 			}
 
 			## A version 7 UUID, as `Gen.Sys.v7!`, and the generator to use
@@ -320,7 +354,7 @@ Uuid :: [Bits(U128)].{
 			v7 : Uuid.Gen.Seeded(g), n -> (Uuid, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g), n.to_u64_try : n -> Try(U64, e)]
 			v7 = |gen, ms| {
 				(bits, next) = draw_seeded(gen)
-				(make_v7(bits, ms), next)
+				(Uuid.v7_from(bits, ms), next)
 			}
 
 			## A version 7 UUID that sorts after `previous`, as
@@ -333,7 +367,7 @@ Uuid :: [Bits(U128)].{
 			next_v7 : Uuid.Gen.Seeded(g), Uuid, n -> (Uuid, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g), n.to_u64_try : n -> Try(U64, e)]
 			next_v7 = |gen, previous, ms| {
 				(bits, next) = draw_seeded(gen)
-				(make_next_v7(bits, previous, ms), next)
+				(Uuid.next_v7_from(bits, previous, ms), next)
 			}
 
 			## A version 8 UUID, as `Gen.Sys.v8!`, and the generator to use next
@@ -393,37 +427,6 @@ draw_seeded = |{ generator }| {
 	(hi, after_hi) = generator.step()
 	(lo, after_lo) = after_hi.step()
 	(join(hi, lo), Uuid.Gen.Seeded.new(after_lo))
-}
-
-## A version 4 UUID from 128 random bits, with the 6 bits at the version
-## and variant positions replaced
-make_v4 : U128 -> Uuid
-make_v4 = |bits| with_version(bits, 4)
-
-## A version 7 UUID: the time, then the low 80 bits of `bits` with the
-## version and variant positions replaced
-make_v7 : U128, n -> Uuid where [n.to_u64_try : n -> Try(U64, e)]
-make_v7 = |bits, ms| {
-	time = to_ms(ms).to_u128().bitwise_and(0xFFFF_FFFF_FFFF).shl_wrap(80)
-	with_version(time.bitwise_or(bits.bitwise_and(low_80_bits)), 7)
-}
-
-## RFC 9562 section 6.2, method 1, as documented on `Gen.Sys.next_v7!`
-make_next_v7 : U128, Uuid, n -> Uuid where [n.to_u64_try : n -> Try(U64, e)]
-make_next_v7 = |bits, previous, ms| {
-	time = to_ms(ms).bitwise_and(0xFFFF_FFFF_FFFF)
-	match previous.unix_ms() {
-		Ok(previous_ms) if time <= previous_ms => {
-			counter = previous.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF)
-			if counter < 0xFFF {
-				v7_parts(previous_ms, counter + 1, bits)
-			} else {
-				# Wraps to 0 only after the year 10889
-				v7_parts(previous_ms.plus_wrap(1).bitwise_and(0xFFFF_FFFF_FFFF), fresh_counter(bits), bits)
-			}
-		}
-		_ => v7_parts(time, fresh_counter(bits), bits)
-	}
 }
 
 version_for : U8 -> Uuid.Version
@@ -638,9 +641,9 @@ lowercase = |text| Str.from_utf8_lossy(text.to_utf8().map(|c| if (c >= 'A' and c
 
 # The v4 and v7 examples come out of `v4` and `v7` from their bits, even when
 # the version and variant positions hold something else
-expect make_v4(0x9191_08f7_52d1_f320_5bac_f847_db41_48a8) == parse("919108f7-52d1-4320-9bac-f847db4148a8")
+expect Uuid.v4_from(0x9191_08f7_52d1_f320_5bac_f847_db41_48a8) == parse("919108f7-52d1-4320-9bac-f847db4148a8")
 
-expect make_v7(0xFFFF_FFFF_FFFF_0CC3_D8C4_DC0C_0C07_398F, 0x017F_22E2_79B0) == parse("017F22E2-79B0-7CC3-98C4-DC0C0C07398F")
+expect Uuid.v7_from(0xFFFF_FFFF_FFFF_0CC3_D8C4_DC0C_0C07_398F, 0x017F_22E2_79B0) == parse("017F22E2-79B0-7CC3-98C4-DC0C0C07398F")
 
 expect parse("017F22E2-79B0-7CC3-98C4-DC0C0C07398F").unix_ms() == Ok(0x017F_22E2_79B0)
 
@@ -722,7 +725,7 @@ expect Uuid.from_bytes(List.repeat(1, 15)) == Err(WrongLength(15))
 # Ordering is strict, and List.sort sorts by it
 expect !(Uuid.nil < Uuid.nil) and !(Uuid.max > Uuid.max) and Uuid.nil <= Uuid.nil
 
-expect [Uuid.max, Uuid.nil, make_v7(0, 5), make_v7(0, 4)].sort() == [Uuid.nil, make_v7(0, 4), make_v7(0, 5), Uuid.max]
+expect [Uuid.max, Uuid.nil, Uuid.v7_from(0, 5), Uuid.v7_from(0, 4)].sort() == [Uuid.nil, Uuid.v7_from(0, 4), Uuid.v7_from(0, 5), Uuid.max]
 
 # A 32-digit form with more after it reports where the UUID ends
 expect Uuid.from_str_lenient("f81d4fae7dec11d0a76500a0c91e6bf60") == Err(InvalidUuid({ index: 32, problem: WrongLength }))
@@ -751,17 +754,17 @@ expect {
 	(a_next, _) = after_a.v4()
 	(b_next, _) = after_b.v7(5000)
 	(c_next, _) = after_c.next_v7(c, 5000)
-	a == make_v4(bits) and d == Uuid.v8_from(bits) and b == make_v7(bits, 5000) and c == make_next_v7(bits, Uuid.nil, 5000)
-		and a_next == make_v4(next_bits) and b_next == make_v7(next_bits, 5000) and c_next == make_next_v7(next_bits, c, 5000)
+	a == Uuid.v4_from(bits) and d == Uuid.v8_from(bits) and b == Uuid.v7_from(bits, 5000) and c == Uuid.next_v7_from(bits, Uuid.nil, 5000)
+		and a_next == Uuid.v4_from(next_bits) and b_next == Uuid.v7_from(next_bits, 5000) and c_next == Uuid.next_v7_from(next_bits, c, 5000)
 }
 
 # next_v7 adds exactly 1 to the counter it reads, up to the last value
 expect {
-	base = make_v7(0, 5000).to_u128()
+	base = Uuid.v7_from(0, 5000).to_u128()
 	[0x000, 0x5A5, 0x800, 0xFFE].all(
 		|counter| {
 			previous = Uuid.from_u128(base.bitwise_or(counter.shl_wrap(64)))
-			next = make_next_v7(0, previous, 5000)
+			next = Uuid.next_v7_from(0, previous, 5000)
 			next.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF) == counter + 1 and next.unix_ms() == Ok(5000)
 		},
 	)
@@ -769,33 +772,33 @@ expect {
 
 # After a full counter: the next millisecond, and a fresh counter below 0x800
 expect {
-	full = Uuid.from_u128(make_v7(0, 5000).to_u128().bitwise_or((0xFFF.U128).shl_wrap(64)))
-	next = make_next_v7(Uuid.max.to_u128(), full, 5000)
+	full = Uuid.from_u128(Uuid.v7_from(0, 5000).to_u128().bitwise_or((0xFFF.U128).shl_wrap(64)))
+	next = Uuid.next_v7_from(Uuid.max.to_u128(), full, 5000)
 	counter = next.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF)
 	next.unix_ms() == Ok(5001) and counter == 0x7FF
 }
 
 # The fresh counter comes from the 11 bits above rand_b, not from rand_b
 expect {
-	only_rand_b = make_next_v7(0x3FFF_FFFF_FFFF_FFFF, Uuid.nil, 5000)
-	only_counter = make_next_v7((0x7FF.U128).shl_wrap(62), Uuid.nil, 5000)
+	only_rand_b = Uuid.next_v7_from(0x3FFF_FFFF_FFFF_FFFF, Uuid.nil, 5000)
+	only_counter = Uuid.next_v7_from((0x7FF.U128).shl_wrap(62), Uuid.nil, 5000)
 	only_rand_b.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF) == 0
 		and only_counter.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF) == 0x7FF
 		and only_counter.to_u128().bitwise_and(0x3FFF_FFFF_FFFF_FFFF) == 0
 }
 
 # next_v7 keeps all 48 bits of the time
-expect make_next_v7(0, Uuid.nil, 0xFFFF_FFFF_FF00).unix_ms() == Ok(0xFFFF_FFFF_FF00)
+expect Uuid.next_v7_from(0, Uuid.nil, 0xFFFF_FFFF_FF00).unix_ms() == Ok(0xFFFF_FFFF_FF00)
 
-expect make_next_v7(0, make_v7(0, 0xF000_0000_0000), 0xF000_0000_0001).unix_ms() == Ok(0xF000_0000_0001)
+expect Uuid.next_v7_from(0, Uuid.v7_from(0, 0xF000_0000_0000), 0xF000_0000_0001).unix_ms() == Ok(0xF000_0000_0001)
 
 # v4, v7 and v8 always set their version and the RFC variant, and keep every
 # other bit they're given
 expect samples(500, 1).all(
 	|bits| {
-		a = make_v4(bits)
+		a = Uuid.v4_from(bits)
 		b = Uuid.v8_from(bits)
-		c = make_v7(bits, bits.to_u64_wrap())
+		c = Uuid.v7_from(bits, bits.to_u64_wrap())
 		keep = 0xFFFF_FFFF_FFFF_0FFF_3FFF_FFFF_FFFF_FFFF
 		a.version() == V4 and a.variant() == Rfc9562 and a.to_u128().bitwise_and(keep) == bits.bitwise_and(keep)
 			and b.version() == V8 and b.variant() == Rfc9562 and b.to_u128().bitwise_and(keep) == bits.bitwise_and(keep)
@@ -885,7 +888,7 @@ expect Uuid.from_str_lenient("{}") == Err(InvalidUuid({ index: 1, problem: Wrong
 # Ordering is RFC byte order, and v7 sorts by time
 expect Uuid.nil < Uuid.max and Uuid.max > Uuid.nil and Uuid.nil <= Uuid.nil and Uuid.max >= Uuid.max
 
-expect make_v7(Uuid.max.to_u128(), 1000) < make_v7(0, 1001)
+expect Uuid.v7_from(Uuid.max.to_u128(), 1000) < Uuid.v7_from(0, 1001)
 
 # Uuid works as a Dict key
 expect {
@@ -916,7 +919,7 @@ expect {
 				1 => $ms - r % 20
 				_ => $ms
 			}
-		next = make_next_v7(bits, $last, $ms)
+		next = Uuid.next_v7_from(bits, $last, $ms)
 		previous_ms = $last.unix_ms() ?? 0
 		if !(next > $last and next.version() == V7 and next.variant() == Rfc9562 and (next.unix_ms() ?? 0) >= previous_ms) {
 			$ok = False
@@ -929,29 +932,29 @@ expect {
 
 # A new millisecond takes the new time; an earlier one keeps the last time
 expect {
-	first = make_next_v7(0, Uuid.nil, 5000)
-	later = make_next_v7(0, first, 6000)
-	earlier = make_next_v7(0, later, 4000)
+	first = Uuid.next_v7_from(0, Uuid.nil, 5000)
+	later = Uuid.next_v7_from(0, first, 6000)
+	earlier = Uuid.next_v7_from(0, later, 4000)
 	first.unix_ms() == Ok(5000) and later.unix_ms() == Ok(6000) and earlier.unix_ms() == Ok(6000) and earlier > later
 }
 
 # A fresh counter leaves room for 2048 more in the same millisecond
 expect {
-	start = make_next_v7(Uuid.max.to_u128(), Uuid.nil, 5000)
+	start = Uuid.next_v7_from(Uuid.max.to_u128(), Uuid.nil, 5000)
 	start.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF) == 0x7FF
 }
 
 # A full counter moves to the next millisecond
 expect {
-	full = Uuid.from_u128(make_v7(0, 5000).to_u128().bitwise_or((0xFFF.U128).shl_wrap(64)))
-	next = make_next_v7(0, full, 5000)
+	full = Uuid.from_u128(Uuid.v7_from(0, 5000).to_u128().bitwise_or((0xFFF.U128).shl_wrap(64)))
+	next = Uuid.next_v7_from(0, full, 5000)
 	next.unix_ms() == Ok(5001) and next > full
 }
 
 # The time can be any integer type from U64 up, and a time before 1970 or
 # past what a U64 holds counts as 0
-expect make_v7(0, 5000.I128).unix_ms() == Ok(5000) and make_v7(0, 5000.U128).unix_ms() == Ok(5000) and make_v7(0, 5000.I64).unix_ms() == Ok(5000)
+expect Uuid.v7_from(0, 5000.I128).unix_ms() == Ok(5000) and Uuid.v7_from(0, 5000.U128).unix_ms() == Ok(5000) and Uuid.v7_from(0, 5000.I64).unix_ms() == Ok(5000)
 
-expect make_v7(0, -1.I128).unix_ms() == Ok(0) and make_v7(0, 0x1_0000_0000_0000_0000.U128).unix_ms() == Ok(0)
+expect Uuid.v7_from(0, -1.I128).unix_ms() == Ok(0) and Uuid.v7_from(0, 0x1_0000_0000_0000_0000.U128).unix_ms() == Ok(0)
 
-expect make_next_v7(0, Uuid.nil, -5.I64).unix_ms() == Ok(0)
+expect Uuid.next_v7_from(0, Uuid.nil, -5.I64).unix_ms() == Ok(0)

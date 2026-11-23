@@ -98,6 +98,8 @@ gen.v4!()?                    # 122 random bits
 gen.v7!(unix_ms)?             # the time in milliseconds, then 74 random bits
 gen.v8!()?                    # 122 random bits, as version 8
 Uuid.v8_from(your_bits)       # your own 122 bits, from a U128
+Uuid.v4_from(bits)            # from random bits you already have, likewise
+                              # v7_from(bits, ms) and next_v7_from(bits, last, ms)
 Uuid.v5(Uuid.namespace_dns, "www.example.com".to_utf8())
 Uuid.v3(Uuid.namespace_dns, "www.example.com".to_utf8())
 ```
