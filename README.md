@@ -55,11 +55,11 @@ This package never asks the platform for anything. You give it a source of
 random numbers and the time, so it works the same on every platform and in
 tests.
 
-`Uuid.Eff`, `Uuid.Pure` and `Uuid.Bits` hold the source of random numbers. Make one and reuse it for
-every UUID. With an effectful source, such as basic-cli's `Random.seed_u64!`,
-use `Uuid.Eff`, and the source's error passes through. This is the
-one to use for IDs, because basic-cli reads the operating system's secure
-random number generator, as RFC 9562 recommends.
+With an effectful source of random numbers, such as basic-cli's
+`Random.seed_u64!`, use `Uuid.Eff`. Make one and reuse it for every UUID,
+and the source's error passes through. This is the one to use for IDs,
+because basic-cli reads the operating system's secure random number
+generator, as RFC 9562 recommends.
 
 ```roc
 gen = Uuid.Eff.new(Random.seed_u64!)
@@ -67,8 +67,8 @@ id = gen.v4!()?
 ```
 
 With a pure generator, such as [roc-prng](https://github.com/niclas-ahden/roc-prng)'s
-`Seed`, use `Uuid.Pure`. Each UUID comes back with the generator to
-use next, so keep it in a mutable variable. Any type with a
+`Seed`, use `Uuid.Pure`. Each UUID comes back with the generator to use
+next, so keep it in a mutable variable. Any type with a
 `step : g -> (U64, g)` method works. Seed it from the platform's randomness,
 not the clock, since two processes seeded at the same moment would make the
 same UUIDs. roc-prng's generator isn't cryptographically secure, so prefer
@@ -100,22 +100,24 @@ wrong but valid-looking UUID. A time before 1970 counts as 0.
 ### Making UUIDs
 
 ```roc
-gen.v4!()?                      # 122 random bits
-gen.v7!(unix_ms)?               # the time in milliseconds, then 74 random bits
-gen.next_v7!(last, unix_ms)?    # a version 7 that sorts after `last`
-gen.v8!()?                      # 122 random bits, as version 8
-Uuid.Bits.new(mine).v8()   # your own 122 bits, laid out however you need
-Uuid.Namespace.dns.v5("www.example.com".to_utf8())
-Uuid.Namespace.dns.v3("www.example.com".to_utf8())
+gen.v4!()?                       # 122 random bits
+gen.v7!(unix_ms)?                # the time in milliseconds, then 74 random bits
+gen.next_v7!(last, unix_ms)?     # a version 7 that sorts after `last`
+gen.v8!()?                       # 122 random bits, as version 8
+Uuid.Bits.new(mine).v8()         # your own 122 bits, laid out however you need
+Uuid.Namespace.dns.v5_str("www.example.com")
+Uuid.Namespace.dns.v3_str("www.example.com")
 ```
 
 Use version 7 for database keys, because new keys land at the end of the
 index. Use version 4 when an ID shouldn't reveal when it was made. Use
 version 5 when the same name should always give the same UUID, and version 3
-only to match existing version 3 IDs. Names are bytes. The namespaces from
-RFC 9562 are `Uuid.Namespace.dns`, `url`, `oid` and `x500`, and
-`Uuid.Namespace.new(uuid)` makes your own. Version 5 uses [roc-sha1](https://github.com/jaredramirez/roc-sha1)
-and version 3 [roc-md5](https://github.com/niclas-ahden/roc-md5).
+only to match existing version 3 IDs. Names are bytes, given to `v5` and
+`v3` as a `List(U8)`, and `v5_str` and `v3_str` take text. The namespaces
+from RFC 9562 are `Uuid.Namespace.dns`, `url`, `oid` and `x500`, and
+`Uuid.Namespace.new(uuid)` makes your own. Version 5 uses
+[roc-sha1](https://github.com/jaredramirez/roc-sha1) and version 3
+[roc-md5](https://github.com/niclas-ahden/roc-md5).
 
 Version 7 UUIDs from different milliseconds sort by time. To also keep them
 in order within a millisecond, or when the clock goes backwards, make each
@@ -216,6 +218,8 @@ request.
 
 ## Releasing
 
-Push a version tag such as `0.1.0`. The release workflow runs the tests and
-the differential test, bundles `package/` with `just bundle`, and attaches
-the archive to a GitHub release whose notes give the package URL.
+Push a version tag such as `1.0.0`, or `1.0.0-rc.1` for a release
+candidate. The release workflow runs the tests and the differential test,
+bundles `package/` with `just bundle`, and attaches the archive to a GitHub
+release whose notes give the package URL. Release candidates are marked as
+prereleases.

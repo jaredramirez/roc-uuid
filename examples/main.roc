@@ -42,9 +42,9 @@ main! = |_args| {
 	}
 
 	# Name-based
-	by_name = Uuid.Namespace.dns.v5("www.example.com".to_utf8())
+	by_name = Uuid.Namespace.dns.v5_str("www.example.com")
 	Stdout.line!("v5: ${by_name.to_str()}")?
-	by_name_md5 = Uuid.Namespace.dns.v3("www.example.com".to_utf8())
+	by_name_md5 = Uuid.Namespace.dns.v3_str("www.example.com")
 	Stdout.line!("v3: ${by_name_md5.to_str()}")?
 
 	# Fixed bits, such as in tests

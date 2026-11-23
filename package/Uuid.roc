@@ -173,7 +173,7 @@ Uuid :: [Bits(U128)].{
 	## namespace and a name with `v5` (or `v3`):
 	##
 	## ```roc
-	## Uuid.Namespace.dns.v5("www.example.com".to_utf8())
+	## Uuid.Namespace.dns.v5_str("www.example.com")
 	## ```
 	Namespace :: { uuid : Uuid }.{
 
@@ -208,6 +208,18 @@ Uuid :: [Bits(U128)].{
 		## A version 3 UUID: the MD5 hash of the namespace followed by `name`
 		v3 : Uuid.Namespace, List(U8) -> Uuid
 		v3 = |ns, name| name_based(Md5.hash(ns.uuid.to_bytes().concat(name)).to_bytes(), 3)
+
+		## `v5` of a name given as text, using its UTF-8 bytes
+		##
+		## ```roc
+		## Uuid.Namespace.dns.v5_str("www.example.com")
+		## ```
+		v5_str : Uuid.Namespace, Str -> Uuid
+		v5_str = |ns, name| ns.v5(name.to_utf8())
+
+		## `v3` of a name given as text, using its UTF-8 bytes
+		v3_str : Uuid.Namespace, Str -> Uuid
+		v3_str = |ns, name| ns.v3(name.to_utf8())
 	}
 
 	## UUIDs from an effectful source of 64-bit numbers, such as
@@ -967,3 +979,10 @@ expect Uuid.Bits.new(0).v7(5000.I128).unix_ms() == Ok(5000) and Uuid.Bits.new(0)
 expect Uuid.Bits.new(0).v7(-1.I128).unix_ms() == Ok(0) and Uuid.Bits.new(0).v7(0x1_0000_0000_0000_0000.U128).unix_ms() == Ok(0)
 
 expect Uuid.Bits.new(0).next_v7(Uuid.nil, -5.I64).unix_ms() == Ok(0)
+
+# The text shortcuts hash the name's UTF-8 bytes
+expect Uuid.Namespace.dns.v5_str("www.example.com") == parse("2ed6657d-e927-568b-95e1-2665a8aea6a2")
+
+expect Uuid.Namespace.dns.v3_str("www.example.com") == parse("5df41881-3aed-3515-88a7-2f4a814cf09e")
+
+expect Uuid.Namespace.url.v5_str("héllo €") == Uuid.Namespace.url.v5("héllo €".to_utf8())

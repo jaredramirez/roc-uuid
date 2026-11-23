@@ -1,11 +1,11 @@
 name: Release
 
-# Push a version tag such as 0.1.0 to publish the bundle as a release asset. The
+# Push a version tag such as 1.0.0, or 1.0.0-rc.1 for a prerelease, to publish the bundle as a release asset. The
 # package URL is then
 # https://github.com/<owner>/roc-uuid/releases/download/<tag>/<hash>.tar.zst
 on:
   push:
-    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+    tags: ["[0-9]+.[0-9]+.[0-9]+", "[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"]
 
 permissions:
   contents: write
@@ -32,4 +32,6 @@ jobs:
         run: |
           archive=$(ls dist/*.tar.zst)
           url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$(basename "$archive")"
-          gh release create "$GITHUB_REF_NAME" "$archive" --title "$GITHUB_REF_NAME" --notes "Package URL: \`$url\`"
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" "$archive" --title "$GITHUB_REF_NAME" --notes "Package URL: \`$url\`" $prerelease
