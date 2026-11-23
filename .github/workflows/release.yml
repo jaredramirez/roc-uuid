@@ -1,18 +1,26 @@
 name: Release
 
-# Push a version tag such as 1.0.0, or 1.0.0-rc.1 for a prerelease, to publish the bundle as a release asset. The
-# package URL is then
+# Push a version tag such as 1.0.0, or 1.0.0-rc.1 for a prerelease, to publish
+# the bundle as a release asset and the docs to GitHub Pages. The package URL
+# is then
 # https://github.com/<owner>/roc-uuid/releases/download/<tag>/<hash>.tar.zst
+#
+# Running the workflow by hand on a tag republishes only the docs.
 on:
   push:
     tags: ["[0-9]+.[0-9]+.[0-9]+", "[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"]
+  workflow_dispatch:
 
-permissions:
-  contents: write
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
       - uses: cachix/install-nix-action@v31
@@ -35,3 +43,29 @@ jobs:
           prerelease=""
           case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" "$archive" --title "$GITHUB_REF_NAME" --notes "Package URL: \`$url\`" $prerelease
+
+  docs:
+    needs: release
+    # After a release, or on its own when run by hand
+    if: ${{ !cancelled() && (needs.release.result == 'success' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+      - name: Install devenv
+        run: nix profile install nixpkgs#devenv
+      - name: Build the docs
+        run: devenv shell just docs
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: generated-docs
+      - id: deploy
+        uses: actions/deploy-pages@v4

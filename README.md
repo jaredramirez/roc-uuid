@@ -11,7 +11,8 @@ UUIDs for [Roc](https://www.roc-lang.org), following
 - Works on every platform, because it never reads a clock or random
   number generator itself
 
-Written for the Roc 0.1.0_RC1 compiler.
+Written for the Roc 0.1.0_RC1 compiler. The API docs are at
+<https://jaredramirez.github.io/roc-uuid/>.
 
 ## Usage
 
@@ -222,4 +223,5 @@ Push a version tag such as `1.0.0`, or `1.0.0-rc.1` for a release
 candidate. The release workflow runs the tests and the differential test,
 bundles `package/` with `just bundle`, and attaches the archive to a GitHub
 release whose notes give the package URL. Release candidates are marked as
-prereleases.
+prereleases. It then publishes the docs to GitHub Pages. To republish only
+the docs, run the Release workflow by hand.
