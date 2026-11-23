@@ -18,7 +18,7 @@ Written for the Roc 0.1.0_RC1 compiler.
 ```roc
 app [main!] {
 	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.1/7brgwR8YUqfeGrkdfF1V4GPPN7DnP7ftqub9KcrTEZtr.tar.zst",
-	uuid: "RELEASE_URL",
+	uuid: "https://github.com/jaredramirez/roc-uuid/releases/download/0.1.0/7sUeZ4HjfGX1ciy1cd1FxNLaeER87Mw8aocjyjwu4Rpt.tar.zst",
 }
 
 import pf.Random
