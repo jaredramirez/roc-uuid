@@ -3,7 +3,7 @@
 ##
 ## A `Uuid` is 128 bits. Parse one with `from_str`, write one with `to_str`,
 ## and make new ones with `v4` (random), `v7` (random, sorted by creation
-## time) from a `Gen`, `v8` (your own layout), or `v3` and `v5` (derived from a name).
+## time) or `v8` (custom) from a `Gen`, `v8_from` (your own layout), or `v3` and `v5` (derived from a name).
 ##
 ## This package never reads a clock or a random number generator itself, so
 ## it works on every platform. You pass in timestamps, and a `Gen` gets random
@@ -47,7 +47,7 @@ Uuid :: [Bits(U128)].{
 	max = Bits(0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF)
 
 	## A UUID from its 128 bits, most significant first, as is. This sets no
-	## version or variant bits; use `v4`, `v7` or `v8` to make a new UUID.
+	## version or variant bits; use a `Gen` or `v8_from` to make a new UUID.
 	from_u128 : U128 -> Uuid
 	from_u128 = |bits| Bits(bits)
 
@@ -167,10 +167,11 @@ Uuid :: [Bits(U128)].{
 			_ => Err(NotV7)
 		}
 
-	## A version 8 UUID: 122 bits laid out however you need. `bits` keeps
-	## everything but the 6 bits at the version and variant positions.
-	v8 : U128 -> Uuid
-	v8 = |bits| with_version(bits, 8)
+	## A version 8 UUID from your own bits, laid out however you need. `bits`
+	## keeps everything but the 6 bits at the version and variant positions.
+	## For random ones, use a `Gen`'s `v8`.
+	v8_from : U128 -> Uuid
+	v8_from = |bits| with_version(bits, 8)
 
 	## A version 3 UUID: the MD5 hash of `namespace` followed by `name`, so the
 	## same name in the same namespace always gives the same UUID. RFC 9562
@@ -239,7 +240,7 @@ Uuid :: [Bits(U128)].{
 
 			## A version 4 UUID: 122 random bits.
 			v4! : Uuid.Gen.Sys(err) => Try(Uuid, err)
-			v4! = |gen| Ok(make_v4(gen.draw!()?))
+			v4! = |gen| Ok(make_v4(draw_sys!(gen)?))
 
 			## A version 7 UUID: the Unix timestamp in milliseconds, then 74
 			## random bits. UUIDs made in different milliseconds sort by when
@@ -259,7 +260,7 @@ Uuid :: [Bits(U128)].{
 			## sorted_id = gen.v7!(now)?
 			## ```
 			v7! : Uuid.Gen.Sys(err), n => Try(Uuid, err) where [n.to_u64_try : n -> Try(U64, e)]
-			v7! = |gen, ms| Ok(make_v7(gen.draw!()?, ms))
+			v7! = |gen, ms| Ok(make_v7(draw_sys!(gen)?, ms))
 
 			## A version 7 UUID that sorts after `previous`, even when it's made
 			## in the same millisecond or the clock has gone backwards,
@@ -284,15 +285,12 @@ Uuid :: [Bits(U128)].{
 			## $last = gen.next_v7!($last, now)?
 			## ```
 			next_v7! : Uuid.Gen.Sys(err), Uuid, n => Try(Uuid, err) where [n.to_u64_try : n -> Try(U64, e)]
-			next_v7! = |gen, previous, ms| Ok(make_next_v7(gen.draw!()?, previous, ms))
+			next_v7! = |gen, previous, ms| Ok(make_next_v7(draw_sys!(gen)?, previous, ms))
 
-			## 128 fresh random bits, such as for `Uuid.v8`
-			draw! : Uuid.Gen.Sys(err) => Try(U128, err)
-			draw! = |gen| {
-				hi = (gen.next!)()?
-				lo = (gen.next!)()?
-				Ok(join(hi, lo))
-			}
+			## A version 8 UUID: 122 random bits. Use `Uuid.v8_from` to lay
+			## out your own.
+			v8! : Uuid.Gen.Sys(err) => Try(Uuid, err)
+			v8! = |gen| Ok(Uuid.v8_from(draw_sys!(gen)?))
 		}
 
 		## A generator of UUIDs from a pure pseudo-random generator with a
@@ -313,7 +311,7 @@ Uuid :: [Bits(U128)].{
 			## next
 			v4 : Uuid.Gen.Seeded(g) -> (Uuid, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g)]
 			v4 = |gen| {
-				(bits, next) = gen.draw()
+				(bits, next) = draw_seeded(gen)
 				(make_v4(bits), next)
 			}
 
@@ -321,7 +319,7 @@ Uuid :: [Bits(U128)].{
 			## next
 			v7 : Uuid.Gen.Seeded(g), n -> (Uuid, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g), n.to_u64_try : n -> Try(U64, e)]
 			v7 = |gen, ms| {
-				(bits, next) = gen.draw()
+				(bits, next) = draw_seeded(gen)
 				(make_v7(bits, ms), next)
 			}
 
@@ -334,17 +332,15 @@ Uuid :: [Bits(U128)].{
 			## ```
 			next_v7 : Uuid.Gen.Seeded(g), Uuid, n -> (Uuid, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g), n.to_u64_try : n -> Try(U64, e)]
 			next_v7 = |gen, previous, ms| {
-				(bits, next) = gen.draw()
+				(bits, next) = draw_seeded(gen)
 				(make_next_v7(bits, previous, ms), next)
 			}
 
-			## 128 fresh random bits, such as for `Uuid.v8`, and the generator
-			## to use next
-			draw : Uuid.Gen.Seeded(g) -> (U128, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g)]
-			draw = |{ generator }| {
-				(hi, after_hi) = generator.step()
-				(lo, after_lo) = after_hi.step()
-				(join(hi, lo), Seeded.{ generator: after_lo })
+			## A version 8 UUID, as `Gen.Sys.v8!`, and the generator to use next
+			v8 : Uuid.Gen.Seeded(g) -> (Uuid, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g)]
+			v8 = |gen| {
+				(bits, next) = draw_seeded(gen)
+				(Uuid.v8_from(bits), next)
 			}
 		}
 	}
@@ -381,6 +377,23 @@ to_ms = |ms|
 		Ok(time) => time
 		Err(_) => 0
 	}
+
+## 128 random bits from the source in a `Gen.Sys`
+draw_sys! : Uuid.Gen.Sys(err) => Try(U128, err)
+draw_sys! = |gen| {
+	hi = (gen.next!)()?
+	lo = (gen.next!)()?
+	Ok(join(hi, lo))
+}
+
+## 128 random bits from the generator in a `Gen.Seeded`, and the `Gen.Seeded`
+## to use next
+draw_seeded : Uuid.Gen.Seeded(g) -> (U128, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g)]
+draw_seeded = |{ generator }| {
+	(hi, after_hi) = generator.step()
+	(lo, after_lo) = after_hi.step()
+	(join(hi, lo), Uuid.Gen.Seeded.new(after_lo))
+}
 
 ## A version 4 UUID from 128 random bits, with the 6 bits at the version
 ## and variant positions replaced
@@ -593,7 +606,7 @@ samples = |count, seed| {
 	var $gen = Uuid.Gen.Seeded.new(split_mix(seed))
 	var $out = []
 	for _ in List.from_iter((0.U64).until(count)) {
-		(bits, $gen) = $gen.draw()
+		(bits, $gen) = draw_seeded($gen)
 		$out = $out.append(bits)
 	}
 	$out
@@ -721,23 +734,24 @@ expect {
 	(b, g2) = g1.step()
 	(c, g3) = g2.step()
 	(d, _) = g3.step()
-	(first, after_first) = Uuid.Gen.Seeded.new(g0).draw()
-	(second, _) = after_first.draw()
+	(first, after_first) = draw_seeded(Uuid.Gen.Seeded.new(g0))
+	(second, _) = draw_seeded(after_first)
 	first == join(a, b) and second == join(c, d)
 }
 
-# A seeded Gen's v4, v7 and next_v7 use the next bits, and move on
+# A seeded Gen's v4, v7, next_v7 and v8 use the next bits, and move on
 expect {
 	gen = Uuid.Gen.Seeded.new(split_mix(12))
-	(bits, after_bits) = gen.draw()
-	(next_bits, _) = after_bits.draw()
+	(bits, after_bits) = draw_seeded(gen)
+	(next_bits, _) = draw_seeded(after_bits)
 	(a, after_a) = gen.v4()
 	(b, after_b) = gen.v7(5000)
 	(c, after_c) = gen.next_v7(Uuid.nil, 5000)
+	(d, _) = gen.v8()
 	(a_next, _) = after_a.v4()
 	(b_next, _) = after_b.v7(5000)
 	(c_next, _) = after_c.next_v7(c, 5000)
-	a == make_v4(bits) and b == make_v7(bits, 5000) and c == make_next_v7(bits, Uuid.nil, 5000)
+	a == make_v4(bits) and d == Uuid.v8_from(bits) and b == make_v7(bits, 5000) and c == make_next_v7(bits, Uuid.nil, 5000)
 		and a_next == make_v4(next_bits) and b_next == make_v7(next_bits, 5000) and c_next == make_next_v7(next_bits, c, 5000)
 }
 
@@ -780,7 +794,7 @@ expect make_next_v7(0, make_v7(0, 0xF000_0000_0000), 0xF000_0000_0001).unix_ms()
 expect samples(500, 1).all(
 	|bits| {
 		a = make_v4(bits)
-		b = Uuid.v8(bits)
+		b = Uuid.v8_from(bits)
 		c = make_v7(bits, bits.to_u64_wrap())
 		keep = 0xFFFF_FFFF_FFFF_0FFF_3FFF_FFFF_FFFF_FFFF
 		a.version() == V4 and a.variant() == Rfc9562 and a.to_u128().bitwise_and(keep) == bits.bitwise_and(keep)
@@ -894,7 +908,7 @@ expect {
 	var $ok = True
 	for _ in List.from_iter((0.U64).until(3000)) {
 		(r, $mix) = $mix.step()
-		(bits, $gen) = $gen.draw()
+		(bits, $gen) = draw_seeded($gen)
 		# Mostly the same millisecond, sometimes forward, sometimes backward
 		$ms =
 			match r % 10 {

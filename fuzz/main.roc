@@ -38,7 +38,11 @@ test! = |{ data, previous, ms }| {
 	bits = data.take_first(16).fold(0.U128, |n, byte| n.shl_wrap(8).bitwise_or(byte.to_u128()))
 	(v4, _) = fixed(bits).v4()
 	(v7, _) = fixed(bits).v7(ms)
-	for (uuid, version) in [(v4, V4), (v7, V7), (Uuid.v8(bits), V8)] {
+	(v8, _) = fixed(bits).v8()
+	if v8 != Uuid.v8_from(bits) {
+		crash "a Gen's v8 differs from v8_from"
+	}
+	for (uuid, version) in [(v4, V4), (v7, V7), (v8, V8)] {
 		if uuid.version() != version or uuid.variant() != Rfc9562 or Uuid.from_bytes(uuid.to_bytes()) != Ok(uuid) {
 			crash "a generated UUID has the wrong version, variant or bytes"
 		}

@@ -13,7 +13,8 @@ import uuid.Uuid
 ## against Python's uuid module. Numbers and bytes travel as hexadecimal.
 ##
 ## - `B <bits> <ms>`: the UUID with those bits, as text, URN, bytes, version
-##   and variant, then `v4`, `v7` and `v8` made from the same bits
+##   and variant, then `v4`, `v7` and `v8` made from the same bits by a
+##   seeded `Gen`, and `v8_from` of them
 ## - `N3 <namespace> <name>`, `N5 <namespace> <name>`: `v3` or `v5` of a
 ##   name in a namespace
 ## - `P <text>`: `from_str` and `from_str_lenient` of the text
@@ -41,6 +42,7 @@ answer! = |words|
 			uuid = Uuid.from_u128(bits)
 			(v4, _) = fixed(bits).v4()
 			(v7, _) = fixed(bits).v7(ms)
+			(v8, _) = fixed(bits).v8()
 			[
 				uuid.to_str(),
 				uuid.to_urn(),
@@ -49,7 +51,8 @@ answer! = |words|
 				variant_str(uuid.variant()),
 				v4.to_str(),
 				v7.to_str(),
-				Uuid.v8(bits).to_str(),
+				v8.to_str(),
+				Uuid.v8_from(bits).to_str(),
 			]
 				|> Str.join_with(" ")
 		}

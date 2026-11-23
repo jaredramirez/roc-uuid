@@ -82,9 +82,8 @@ var $gen = Uuid.Gen.Seeded.new(Prng.seed(Random.seed_u64!()?))
 (second, $gen) = $gen.v4()
 ```
 
-Both have the same methods, `v4`, `v7` and `next_v7`, and `draw` for 128
-random bits of your own, such as for `Uuid.v8`. In tests, `Uuid.Gen.Seeded`
-with a fixed seed gives the same UUIDs every run.
+Both have the same methods, `v4`, `v7`, `next_v7` and `v8`. In tests,
+`Uuid.Gen.Seeded` with a fixed seed gives the same UUIDs every run.
 
 Timestamps are Unix milliseconds, in any integer type from `U64` up, so
 basic-cli's `Utc.now!().to_millis_since_epoch()` works as it is. Only 48
@@ -97,7 +96,8 @@ wrong but valid-looking UUID. A time before 1970 counts as 0.
 ```roc
 gen.v4!()?                    # 122 random bits
 gen.v7!(unix_ms)?             # the time in milliseconds, then 74 random bits
-Uuid.v8(your_bits)            # your own 122 bits, from a U128
+gen.v8!()?                    # 122 random bits, as version 8
+Uuid.v8_from(your_bits)       # your own 122 bits, from a U128
 Uuid.v5(Uuid.namespace_dns, "www.example.com".to_utf8())
 Uuid.v3(Uuid.namespace_dns, "www.example.com".to_utf8())
 ```
