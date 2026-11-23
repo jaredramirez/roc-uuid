@@ -34,7 +34,8 @@ main! = |_args| {
 
 	# Version 7: random, but sorted by time
 	now = Utc.now!().to_millis_since_epoch().to_u64_wrap()
-	sorted_id = Uuid.v7(now, Uuid.random_bits!(Random.seed_u64!)?)
+	more_bits = Uuid.random_bits!(Random.seed_u64!)?
+	sorted_id = Uuid.v7(now, more_bits)
 	Stdout.line!("v7: ${sorted_id.to_str()}")?
 
 	Ok({})
@@ -106,7 +107,8 @@ timestamp, following RFC 9562 section 6.2, method 1.
 ```roc
 var $last = Uuid.nil
 for _ in rows {
-	$last = Uuid.v7_after($last, now, Uuid.random_bits!(Random.seed_u64!)?)
+	bits = Uuid.random_bits!(Random.seed_u64!)?
+	$last = $last.v7_after(now, bits)
 	# ...
 }
 ```

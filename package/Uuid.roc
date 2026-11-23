@@ -173,7 +173,8 @@ Uuid :: [Bits(U128)].{
 	## positions are replaced.
 	##
 	## ```roc
-	## id = Uuid.v4(Uuid.random_bits!(Random.seed_u64!)?)
+	## bits = Uuid.random_bits!(Random.seed_u64!)?
+	## id = Uuid.v4(bits)
 	## ```
 	v4 : U128 -> Uuid
 	v4 = |bits| with_version(bits, 4)
@@ -212,7 +213,7 @@ Uuid :: [Bits(U128)].{
 	##
 	## ```roc
 	## var $last = Uuid.nil
-	## $last = Uuid.v7_after($last, unix_ms, bits)
+	## $last = $last.v7_after(unix_ms, bits)
 	## ```
 	v7_after : Uuid, U64, U128 -> Uuid
 	v7_after = |previous, ms, bits| {
@@ -292,7 +293,7 @@ Uuid :: [Bits(U128)].{
 	## `step : g -> (U64, g)` method, such as roc-prng's `Seed`.
 	##
 	## ```roc
-	## var $seed = Random.seed(Utc.now!().to_u64_wrap())
+	## var $seed = Prng.seed(Random.seed_u64!()?)
 	## (bits, $seed) = Uuid.random_bits($seed)
 	## ```
 	random_bits : g -> (U128, g) where [g.step : g -> (U64, g)]

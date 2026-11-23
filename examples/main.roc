@@ -19,24 +19,29 @@ main! = |_args| {
 
 	# Version 7: random, but sorted by time
 	now = Utc.now!().to_millis_since_epoch().to_u64_wrap()
-	sorted_id = Uuid.v7(now, Uuid.random_bits!(Random.seed_u64!)?)
+	more_bits = Uuid.random_bits!(Random.seed_u64!)?
+	sorted_id = Uuid.v7(now, more_bits)
 	Stdout.line!("v7: ${sorted_id.to_str()}")?
 
 	# A pure generator, seeded from the platform's randomness
 	var $seed = Prng.seed(Random.seed_u64!()?)
 	(seeded_bits, $seed) = Uuid.random_bits($seed)
-	Stdout.line!(Uuid.v4(seeded_bits).to_str())?
+	seeded_id = Uuid.v4(seeded_bits)
+	Stdout.line!("seeded v4: ${seeded_id.to_str()}")?
 
 	# Version 7 in order within a millisecond
 	var $last = Uuid.nil
 	for _ in List.from_iter((0.U64).until(3)) {
-		$last = Uuid.v7_after($last, now, Uuid.random_bits!(Random.seed_u64!)?)
+		row_bits = Uuid.random_bits!(Random.seed_u64!)?
+		$last = $last.v7_after(now, row_bits)
 		Stdout.line!($last.to_str())?
 	}
 
 	# Name-based
-	Stdout.line!(Uuid.v5(Uuid.namespace_dns, "www.example.com".to_utf8()).to_str())?
-	Stdout.line!(Uuid.v3(Uuid.namespace_dns, "www.example.com".to_utf8()).to_str())?
+	by_name = Uuid.v5(Uuid.namespace_dns, "www.example.com".to_utf8())
+	Stdout.line!("v5: ${by_name.to_str()}")?
+	by_name_md5 = Uuid.v3(Uuid.namespace_dns, "www.example.com".to_utf8())
+	Stdout.line!("v3: ${by_name_md5.to_str()}")?
 
 	# Parsing, printing and the exposed types
 	parsed = Uuid.from_str_lenient("{F81D4FAE-7DEC-11D0-A765-00A0C91E6BF6}")?
