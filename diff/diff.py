@@ -90,7 +90,7 @@ def expected_lenient(b):
     return expected_any(b, 0)
 
 
-def v7_after(previous, ms, bits):
+def next_v7(previous, ms, bits):
     """RFC 9562 section 6.2 method 1, as documented: a 12-bit counter after
     the timestamp, seeded from 11 random bits"""
     ms &= 2**48 - 1
@@ -107,7 +107,7 @@ def v7_after(previous, ms, bits):
     return uuid.UUID(int=(ts << 80) | (counter << 64) | (bits & (2**62 - 1)), version=7)
 
 
-def random_bits(rng):
+def random_value(rng):
     """Mostly uniform 128-bit values, plus values with every interesting
     version nibble and variant pattern"""
     n = rng.getrandbits(128)
@@ -155,7 +155,7 @@ def main():
     cases = []  # (line sent to the oracle, function checking its answer)
 
     for _ in range(args.count):
-        n = random_bits(rng)
+        n = random_value(rng)
         ms = rng.getrandbits(rng.choice([40, 48, 64]))
         u = uuid.UUID(int=n)
 
@@ -210,7 +210,7 @@ def main():
 
             cases.append((f"P {text.encode().hex()}".rstrip(), check_parse))
 
-    # v7_after against the model above, from random previous UUIDs: v7 ones
+    # next_v7 against the model above, from random previous UUIDs: v7 ones
     # around the clock reading, ones with a full or nearly full counter, and
     # ones that aren't v7
     for _ in range(args.count):
@@ -223,7 +223,7 @@ def main():
             prev_ms = (ms + rng.randrange(-3, 4)) % 2**48
             counter = rng.choice([0xFFF, 0xFFE, rng.getrandbits(12)])
             previous = uuid.UUID(int=(prev_ms << 80) | (counter << 64) | rng.getrandbits(64), version=7).int
-        want = str(v7_after(previous, ms, bits))
+        want = str(next_v7(previous, ms, bits))
         cases.append((f"A {previous:032x} {ms:x} {bits:032x}", lambda answer, want=want: (answer == want, want)))
 
     # The namespaces
@@ -273,7 +273,7 @@ def main():
                 print(f"MISMATCH for {line!r}\n  got:  {answer}\n  want: {want}", file=sys.stderr)
     if len(set(random_answers)) != len(random_answers):
         mismatches += 1
-        print("random_bits! repeated a UUID", file=sys.stderr)
+        print("random! repeated a UUID", file=sys.stderr)
 
     print(f"{len(cases)} cases from {args.count} random inputs, seed {seed}: {mismatches} mismatches")
     return 1 if mismatches else 0

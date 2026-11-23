@@ -7,12 +7,12 @@ import fuzz.Fuzz
 import uuid.Uuid
 
 ## Raw fuzz input: `data` is parsed as text and also supplies the bits for
-## generating UUIDs, `previous` is the UUID `v7_after` follows, and `ms` is
+## generating UUIDs, `previous` is the UUID `next_v7` follows, and `ms` is
 ## its clock reading
 Input : { data : List(U8), previous : U128, ms : U64 }
 
 ## Parsing arbitrary text never misreports, generated UUIDs always have the
-## right version, variant and timestamp, and `v7_after` always moves forward
+## right version, variant and timestamp, and `next_v7` always moves forward
 test! : Input => Fuzz.Outcome
 test! = |{ data, previous, ms }| {
 	text = Str.from_utf8_lossy(data)
@@ -36,25 +36,26 @@ test! = |{ data, previous, ms }| {
 	}
 
 	bits = data.take_first(16).fold(0.U128, |n, byte| n.shl_wrap(8).bitwise_or(byte.to_u128()))
-	for (uuid, version) in [(Uuid.v4(bits), V4), (Uuid.v7(ms, bits), V7), (Uuid.v8(bits), V8)] {
+	random = Uuid.Random.from_bits(bits)
+	for (uuid, version) in [(random.v4(), V4), (random.v7(ms), V7), (Uuid.v8(bits), V8)] {
 		if uuid.version() != version or uuid.variant() != Rfc9562 or Uuid.from_bytes(uuid.to_bytes()) != Ok(uuid) {
 			crash "a generated UUID has the wrong version, variant or bytes"
 		}
 	}
-	if Uuid.v7(ms, bits).unix_ms() != Ok(ms.bitwise_and(0xFFFF_FFFF_FFFF)) {
+	if random.v7(ms).unix_ms() != Ok(ms.bitwise_and(0xFFFF_FFFF_FFFF)) {
 		crash "v7 lost its timestamp"
 	}
 
-	# v7_after moves forward, except past the last millisecond in the year 10889
+	# next_v7 moves forward, except past the last millisecond in the year 10889
 	before = Uuid.from_u128(previous)
-	after = Uuid.v7_after(before, ms, bits)
+	after = before.next_v7(ms, random)
 	at_the_end = before.unix_ms() == Ok(0xFFFF_FFFF_FFFF) and previous.shr_zf_wrap(64).bitwise_and(0xFFF) == 0xFFF
 	if after.version() != V7 or after.variant() != Rfc9562 {
-		crash "v7_after made something other than a v7"
+		crash "next_v7 made something other than a v7"
 	}
 	match before.unix_ms() {
-		Ok(_) if !at_the_end and after <= before => crash "v7_after did not move forward"
-		Err(NotV7) if after.unix_ms() != Ok(ms.bitwise_and(0xFFFF_FFFF_FFFF)) => crash "v7_after from a non-v7 ignored the clock"
+		Ok(_) if !at_the_end and after <= before => crash "next_v7 did not move forward"
+		Err(NotV7) if after.unix_ms() != Ok(ms.bitwise_and(0xFFFF_FFFF_FFFF)) => crash "next_v7 from a non-v7 ignored the clock"
 		_ => {}
 	}
 	Fuzz.keep

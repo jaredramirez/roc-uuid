@@ -6,7 +6,7 @@ UUIDs for [Roc](https://www.roc-lang.org), following
 - Parse and print UUIDs, with errors that say what's wrong and where
 - Make version 4 (random), 7 (random, sorted by time), 8 (custom), and 3 and
   5 (name-based) UUIDs
-- Keep version 7 UUIDs in order within a millisecond with `v7_after`
+- Keep version 7 UUIDs in order within a millisecond with `next_v7`
 - Read a UUID's version, variant and version 7 timestamp
 - Works on every platform, because it never reads a clock or random
   number generator itself
@@ -28,14 +28,12 @@ import uuid.Uuid
 
 main! = |_args| {
 	# Version 4: random
-	bits = Uuid.random_bits!(Random.seed_u64!)?
-	id = Uuid.v4(bits)
+	id = Uuid.random!(Random.seed_u64!)?.v4()
 	Stdout.line!("v4: ${id.to_str()}")?
 
 	# Version 7: random, but sorted by time
-	now = Utc.now!().to_millis_since_epoch().to_u64_wrap()
-	more_bits = Uuid.random_bits!(Random.seed_u64!)?
-	sorted_id = Uuid.v7(now, more_bits)
+	now = Utc.now!().to_millis_since_epoch()
+	sorted_id = Uuid.random!(Random.seed_u64!)?.v7(now)
 	Stdout.line!("v7: ${sorted_id.to_str()}")?
 
 	# Parse one from text
@@ -56,13 +54,14 @@ and the time, so it works the same on every platform and in tests.
 Use fresh random bits for every UUID. Reusing them makes UUIDs share bits,
 so one gives away part of another.
 
-There are two ways to get random bits. With an effectful source, such as
-basic-cli's `Random.seed_u64!`, pass the function in and its error passes
+Random bits are a `Uuid.Random`, and `v4` and `v7` are methods on it.
+There are two ways to get one. With an effectful source, such as basic-cli's
+`Random.seed_u64!`, pass the function to `random!` and its error passes
 through. This is the one to use for IDs, because basic-cli reads the
 operating system's secure random number generator, as RFC 9562 recommends.
 
 ```roc
-bits = Uuid.random_bits!(Random.seed_u64!)?
+id = Uuid.random!(Random.seed_u64!)?.v4()
 ```
 
 With a pure generator, such as [roc-prng](https://github.com/niclas-ahden/roc-prng)'s
@@ -70,27 +69,30 @@ With a pure generator, such as [roc-prng](https://github.com/niclas-ahden/roc-pr
 `step : g -> (U64, g)` method works. Seed it from the platform's randomness,
 not the clock, since two processes seeded at the same moment would make the
 same UUIDs. roc-prng's generator isn't cryptographically secure, so prefer
-`random_bits!` when UUIDs must be hard to guess.
+`random!` when UUIDs must be hard to guess.
 
 ```roc
 import prng.Random as Prng
 
 var $seed = Prng.seed(Random.seed_u64!()?)
-(bits, $seed) = Uuid.random_bits($seed)
+(first, $seed) = Uuid.random($seed)
+(second, $seed) = Uuid.random($seed)
 ```
 
-Any `U128` works too, which is handy in tests.
+`Uuid.Random.from_bits` takes any `U128`, which is handy in tests.
 
-Timestamps are Unix milliseconds. Only 48 bits fit, which lasts until the
-year 10889, and anything above that is dropped without an error, so a
-timestamp in nanoseconds or seconds gives a wrong but valid-looking UUID.
+Timestamps are Unix milliseconds, in any integer type from `U64` up, so
+basic-cli's `Utc.now!().to_millis_since_epoch()` works as it is. Only 48
+bits fit, which lasts until the year 10889, and anything above that is
+dropped without an error, so a timestamp in nanoseconds or seconds gives a
+wrong but valid-looking UUID. A time before 1970 counts as 0.
 
 ### Making UUIDs
 
 ```roc
-Uuid.v4(bits)                 # 122 random bits
-Uuid.v7(unix_ms, bits)        # the time in milliseconds, then 74 random bits
-Uuid.v8(bits)                 # your own 122 bits
+bits.v4()                     # 122 random bits
+bits.v7(unix_ms)              # the time in milliseconds, then 74 random bits
+Uuid.v8(your_bits)            # your own 122 bits, from a U128
 Uuid.v5(Uuid.namespace_dns, "www.example.com".to_utf8())
 Uuid.v3(Uuid.namespace_dns, "www.example.com".to_utf8())
 ```
@@ -105,20 +107,20 @@ and version 3 [roc-md5](https://github.com/niclas-ahden/roc-md5).
 
 Version 7 UUIDs from different milliseconds sort by time. To also keep them
 in order within a millisecond, or when the clock goes backwards, make each
-one from the last with `v7_after`. It counts up in the 12 bits after the
+one from the last with `next_v7`. It counts up in the 12 bits after the
 timestamp, following RFC 9562 section 6.2, method 1.
 
 ```roc
 var $last = Uuid.nil
 for _ in rows {
-	bits = Uuid.random_bits!(Random.seed_u64!)?
-	$last = $last.v7_after(now, bits)
+	bits = Uuid.random!(Random.seed_u64!)?
+	$last = $last.next_v7(now, bits)
 	# ...
 }
 ```
 
 The only state is the last UUID, so you can pick up from one you stored,
-like the newest row in a table. Because `v7_after` always sorts after the UUID
+like the newest row in a table. Because `next_v7` always sorts after the UUID
 you give it, a UUID from the future, say from a clock that was ahead or a
 timestamp in the wrong unit, holds every later one at that future time. Only
 pass UUIDs you made yourself or otherwise trust.
@@ -175,7 +177,7 @@ just bench      # nanoseconds per call
 
 The tests include every example UUID in RFC 9562, the namespaces, checks of
 every version nibble and variant boundary, round trips through text, bytes
-and `U128`, errors at every position, and `v7_after` over thousands of clock
+and `U128`, errors at every position, and `next_v7` over thousands of clock
 readings that repeat and go backwards, plus its counter at every edge.
 
 `just diff` checks the package against Python's uuid module, which shares no
@@ -186,9 +188,9 @@ with Python setting the same bits, and `v3` and `v5` with `uuid.uuid3` and
 character changed, and with random edits. It checks that we accept exactly
 the documented forms, read them as Python does, and report each error at
 the position and with the problem the documented rules give. It compares
-`v7_after` with a separate model of RFC 9562 method 1, from previous UUIDs
+`next_v7` with a separate model of RFC 9562 method 1, from previous UUIDs
 around the clock and with full counters. Then it parses UUIDs Python made
-itself, checks the namespaces, and checks that `random_bits!` gives distinct
+itself, checks the namespaces, and checks that `random!` gives distinct
 version 4 UUIDs from two separate draws. CI runs 5000 inputs.
 
 The [roc-fuzz](https://github.com/lukewilliamboswell/roc-fuzz) target parses
@@ -196,7 +198,7 @@ arbitrary text and checks that accepted text round trips and that errors
 point at a plausible place: an invalid character at that byte, a missing
 hyphen at a hyphen position, and a wrong length at the end of the text or of
 a UUID. It also checks that generated UUIDs always have the right version,
-variant and timestamp, and that `v7_after` always moves forward.
+variant and timestamp, and that `next_v7` always moves forward.
 
 CI runs all of this on Linux and macOS for every push to main and every pull
 request.
