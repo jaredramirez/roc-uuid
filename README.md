@@ -28,7 +28,7 @@ import uuid.Uuid
 
 main! = |_args| {
 	# Random bits from the operating system
-	gen = Uuid.Gen.Sys.new(Random.seed_u64!)
+	gen = Uuid.From.Eff.new(Random.seed_u64!)
 
 	# Version 4: random
 	id = gen.v4!()?
@@ -55,35 +55,41 @@ This package never asks the platform for anything. You give it a source of
 random numbers and the time, so it works the same on every platform and in
 tests.
 
-A generator holds the source of random numbers. Make one and reuse it for
+`Uuid.From` holds the source of random numbers. Make one and reuse it for
 every UUID. With an effectful source, such as basic-cli's `Random.seed_u64!`,
-use `Uuid.Gen.Sys`, and the source's error passes through. This is the
+use `Uuid.From.Eff`, and the source's error passes through. This is the
 one to use for IDs, because basic-cli reads the operating system's secure
 random number generator, as RFC 9562 recommends.
 
 ```roc
-gen = Uuid.Gen.Sys.new(Random.seed_u64!)
+gen = Uuid.From.Eff.new(Random.seed_u64!)
 id = gen.v4!()?
 ```
 
 With a pure generator, such as [roc-prng](https://github.com/niclas-ahden/roc-prng)'s
-`Seed`, use `Uuid.Gen.Seeded`. Each UUID comes back with the generator to
+`Seed`, use `Uuid.From.Pure`. Each UUID comes back with the generator to
 use next, so keep it in a mutable variable. Any type with a
 `step : g -> (U64, g)` method works. Seed it from the platform's randomness,
 not the clock, since two processes seeded at the same moment would make the
 same UUIDs. roc-prng's generator isn't cryptographically secure, so prefer
-`Uuid.Gen.Sys` when UUIDs must be hard to guess.
+`Uuid.From.Eff` when UUIDs must be hard to guess.
 
 ```roc
 import prng.Random as Prng
 
-var $gen = Uuid.Gen.Seeded.new(Prng.seed(Random.seed_u64!()?))
+var $gen = Uuid.From.Pure.new(Prng.seed(Random.seed_u64!()?))
 (first, $gen) = $gen.v4()
 (second, $gen) = $gen.v4()
 ```
 
-Both have the same methods, `v4`, `v7`, `next_v7` and `v8`. In tests,
-`Uuid.Gen.Seeded` with a fixed seed gives the same UUIDs every run.
+With random bits you already have, such as in tests, use `Uuid.From.Bits`.
+Its bits are fixed, so make a new one for every UUID.
+
+```roc
+id = Uuid.From.Bits.new(0x9191_08f7_52d1_f320_5bac_f847_db41_48a8).v4()
+```
+
+All three have the same methods, `v4`, `v7`, `next_v7` and `v8`.
 
 Timestamps are Unix milliseconds, in any integer type from `U64` up, so
 basic-cli's `Utc.now!().to_millis_since_epoch()` works as it is. Only 48
@@ -94,22 +100,21 @@ wrong but valid-looking UUID. A time before 1970 counts as 0.
 ### Making UUIDs
 
 ```roc
-gen.v4!()?                    # 122 random bits
-gen.v7!(unix_ms)?             # the time in milliseconds, then 74 random bits
-gen.v8!()?                    # 122 random bits, as version 8
-Uuid.v8_from(your_bits)       # your own 122 bits, from a U128
-Uuid.v4_from(bits)            # from random bits you already have, likewise
-                              # v7_from(bits, ms) and next_v7_from(bits, last, ms)
-Uuid.v5(Uuid.namespace_dns, "www.example.com".to_utf8())
-Uuid.v3(Uuid.namespace_dns, "www.example.com".to_utf8())
+gen.v4!()?                      # 122 random bits
+gen.v7!(unix_ms)?               # the time in milliseconds, then 74 random bits
+gen.next_v7!(last, unix_ms)?    # a version 7 that sorts after `last`
+gen.v8!()?                      # 122 random bits, as version 8
+Uuid.From.Bits.new(mine).v8()   # your own 122 bits, laid out however you need
+Uuid.Namespace.dns.v5("www.example.com".to_utf8())
+Uuid.Namespace.dns.v3("www.example.com".to_utf8())
 ```
 
 Use version 7 for database keys, because new keys land at the end of the
 index. Use version 4 when an ID shouldn't reveal when it was made. Use
 version 5 when the same name should always give the same UUID, and version 3
-only to match existing version 3 IDs. Names are bytes, and the namespaces
-from RFC 9562 are `namespace_dns`, `namespace_url`, `namespace_oid` and
-`namespace_x500`. Version 5 uses [roc-sha1](https://github.com/jaredramirez/roc-sha1)
+only to match existing version 3 IDs. Names are bytes. The namespaces from
+RFC 9562 are `Uuid.Namespace.dns`, `url`, `oid` and `x500`, and
+`Uuid.Namespace.new(uuid)` makes your own. Version 5 uses [roc-sha1](https://github.com/jaredramirez/roc-sha1)
 and version 3 [roc-md5](https://github.com/niclas-ahden/roc-md5).
 
 Version 7 UUIDs from different milliseconds sort by time. To also keep them
@@ -196,7 +201,7 @@ the documented forms, read them as Python does, and report each error at
 the position and with the problem the documented rules give. It compares
 `next_v7` with a separate model of RFC 9562 method 1, from previous UUIDs
 around the clock and with full counters. Then it parses UUIDs Python made
-itself, checks the namespaces, and checks that `Uuid.Gen.Sys` gives distinct
+itself, checks the namespaces, and checks that `Uuid.From.Eff` gives distinct
 version 4 UUIDs from two separate draws. CI runs 5000 inputs.
 
 The [roc-fuzz](https://github.com/lukewilliamboswell/roc-fuzz) target parses

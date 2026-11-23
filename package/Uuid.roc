@@ -1,13 +1,15 @@
 ## Universally unique identifiers, as specified by
 ## [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562).
 ##
-## A `Uuid` is 128 bits. Parse one with `from_str`, write one with `to_str`,
-## and make new ones with `v4` (random), `v7` (random, sorted by creation
-## time) or `v8` (custom) from a `Gen`, `v8_from` (your own layout), or `v3` and `v5` (derived from a name).
+## A `Uuid` is 128 bits. Parse one with `from_str` and write one with
+## `to_str`. Make new ones with `v4` (random), `v7` (random, sorted by
+## creation time) or `v8` (custom) from a `From.Eff`, `From.Pure` or
+## `From.Bits`, or with `v5` and `v3` (derived from a name) from a
+## `Namespace`.
 ##
 ## This package never reads a clock or a random number generator itself, so
-## it works on every platform. You pass in timestamps, and a `Gen` gets random
-## bits from whatever your platform or a pseudo-random generator provides.
+## it works on every platform. You pass in timestamps and a source of random
+## numbers.
 
 import md5.Md5
 import sha1.Sha1
@@ -47,7 +49,7 @@ Uuid :: [Bits(U128)].{
 	max = Bits(0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF)
 
 	## A UUID from its 128 bits, most significant first, as is. This sets no
-	## version or variant bits; use a `Gen` or `v8_from` to make a new UUID.
+	## version or variant bits; use `From` to make a new UUID.
 	from_u128 : U128 -> Uuid
 	from_u128 = |bits| Bits(bits)
 
@@ -167,114 +169,79 @@ Uuid :: [Bits(U128)].{
 			_ => Err(NotV7)
 		}
 
-	## A version 8 UUID from your own bits, laid out however you need. `bits`
-	## keeps everything but the 6 bits at the version and variant positions.
-	## For random ones, use a `Gen`'s `v8`.
-	v8_from : U128 -> Uuid
-	v8_from = |bits| with_version(bits, 8)
+	## Namespaces for name-based UUIDs. Make a version 5 (or 3) UUID from a
+	## namespace and a name with `v5` (or `v3`):
+	##
+	## ```roc
+	## Uuid.Namespace.dns.v5("www.example.com".to_utf8())
+	## ```
+	Namespace :: { uuid : Uuid }.{
 
-	## A version 4 UUID from random bits you already have, such as from
-	## another source or a test. The 6 bits at the version and variant
-	## positions are replaced. A `Gen`'s `v4` gets the bits for you.
-	v4_from : U128 -> Uuid
-	v4_from = |bits| with_version(bits, 4)
+		## A namespace of your own, from any UUID
+		new : Uuid -> Uuid.Namespace
+		new = |uuid| Namespace.{ uuid }
 
-	## A version 7 UUID from random bits you already have: the time in `ms`,
-	## as for `Gen.Sys.v7!`, then the low 80 bits of `bits` with the version
-	## and variant positions replaced.
-	v7_from : U128, n -> Uuid where [n.to_u64_try : n -> Try(U64, e)]
-	v7_from = |bits, ms| {
-		time = to_ms(ms).to_u128().bitwise_and(0xFFFF_FFFF_FFFF).shl_wrap(80)
-		with_version(time.bitwise_or(bits.bitwise_and(low_80_bits)), 7)
+		## The namespace for fully qualified domain names
+		dns : Uuid.Namespace
+		dns = Namespace.{ uuid: Bits(0x6ba7_b810_9dad_11d1_80b4_00c0_4fd4_30c8) }
+
+		## The namespace for URLs
+		url : Uuid.Namespace
+		url = Namespace.{ uuid: Bits(0x6ba7_b811_9dad_11d1_80b4_00c0_4fd4_30c8) }
+
+		## The namespace for ISO object identifiers (OIDs)
+		oid : Uuid.Namespace
+		oid = Namespace.{ uuid: Bits(0x6ba7_b812_9dad_11d1_80b4_00c0_4fd4_30c8) }
+
+		## The namespace for X.500 distinguished names
+		x500 : Uuid.Namespace
+		x500 = Namespace.{ uuid: Bits(0x6ba7_b814_9dad_11d1_80b4_00c0_4fd4_30c8) }
+
+		## The namespace's own UUID
+		to_uuid : Uuid.Namespace -> Uuid
+		to_uuid = |ns| ns.uuid
+
+		## A version 5 UUID: the SHA-1 hash of the namespace followed by `name`
+		v5 : Uuid.Namespace, List(U8) -> Uuid
+		v5 = |ns, name| name_based(Sha1.hash(ns.uuid.to_bytes().concat(name)).to_bytes(), 5)
+
+		## A version 3 UUID: the MD5 hash of the namespace followed by `name`
+		v3 : Uuid.Namespace, List(U8) -> Uuid
+		v3 = |ns, name| name_based(Md5.hash(ns.uuid.to_bytes().concat(name)).to_bytes(), 3)
 	}
 
-	## A version 7 UUID that sorts after `previous`, from random bits you
-	## already have, as `Gen.Sys.next_v7!` describes
-	next_v7_from : U128, Uuid, n -> Uuid where [n.to_u64_try : n -> Try(U64, e)]
-	next_v7_from = |bits, previous, ms| {
-		time = to_ms(ms).bitwise_and(0xFFFF_FFFF_FFFF)
-		match previous.unix_ms() {
-			Ok(previous_ms) if time <= previous_ms => {
-				counter = previous.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF)
-				if counter < 0xFFF {
-					v7_parts(previous_ms, counter + 1, bits)
-				} else {
-					# Wraps to 0 only after the year 10889
-					v7_parts(previous_ms.plus_wrap(1).bitwise_and(0xFFFF_FFFF_FFFF), fresh_counter(bits), bits)
-				}
-			}
-			_ => v7_parts(time, fresh_counter(bits), bits)
-		}
-	}
-
-	## A version 3 UUID: the MD5 hash of `namespace` followed by `name`, so the
-	## same name in the same namespace always gives the same UUID. RFC 9562
-	## prefers `v5`; use `v3` when you need to match existing version 3 IDs.
+	## Where a new UUID's random bits come from. All three have the same
+	## methods, `v4`, `v7`, `next_v7` and `v8`:
+	##
+	## - `From.Eff` reads an effectful source, such as basic-cli's
+	##   `Random.seed_u64!`, for every UUID. Use this one for IDs.
+	## - `From.Pure` steps a pure pseudo-random generator, such as roc-prng's
+	##   `Seed`, and hands back the generator to use next with each UUID.
+	## - `From.Bits` uses bits you already have, such as in tests.
 	##
 	## ```roc
-	## Uuid.v3(Uuid.namespace_dns, "www.example.com".to_utf8())
-	## # 5df41881-3aed-3515-88a7-2f4a814cf09e
-	## ```
-	v3 : Uuid, List(U8) -> Uuid
-	v3 = |namespace, name| name_based(Md5.hash(namespace.to_bytes().concat(name)).to_bytes(), 3)
-
-	## A version 5 UUID: the SHA-1 hash of `namespace` followed by `name`, so
-	## the same name in the same namespace always gives the same UUID. RFC 9562
-	## prefers this to `v3`.
-	##
-	## ```roc
-	## Uuid.v5(Uuid.namespace_dns, "www.example.com".to_utf8())
-	## # 2ed6657d-e927-568b-95e1-2665a8aea6a2
-	## ```
-	v5 : Uuid, List(U8) -> Uuid
-	v5 = |namespace, name| name_based(Sha1.hash(namespace.to_bytes().concat(name)).to_bytes(), 5)
-
-	## The namespace for fully qualified domain names, for `v3` and `v5`.
-	namespace_dns : Uuid
-	namespace_dns = Bits(0x6ba7_b810_9dad_11d1_80b4_00c0_4fd4_30c8)
-
-	## The namespace for URLs, for `v3` and `v5`.
-	namespace_url : Uuid
-	namespace_url = Bits(0x6ba7_b811_9dad_11d1_80b4_00c0_4fd4_30c8)
-
-	## The namespace for ISO object identifiers (OIDs), for `v3` and `v5`.
-	namespace_oid : Uuid
-	namespace_oid = Bits(0x6ba7_b812_9dad_11d1_80b4_00c0_4fd4_30c8)
-
-	## The namespace for X.500 distinguished names, for `v3` and `v5`.
-	namespace_x500 : Uuid
-	namespace_x500 = Bits(0x6ba7_b814_9dad_11d1_80b4_00c0_4fd4_30c8)
-
-	## Generators of UUIDs. Make one and reuse it for every UUID.
-	##
-	## - `Gen.Sys` takes an effectful source of random numbers, such as
-	##   basic-cli's `Random.seed_u64!`
-	## - `Gen.Seeded` takes a pure pseudo-random generator, such as roc-prng's
-	##   `Seed`, and hands back the generator to use next with each UUID
-	##
-	## ```roc
-	## gen = Uuid.Gen.Sys.new(Random.seed_u64!)
+	## gen = Uuid.From.Eff.new(Random.seed_u64!)
 	## id = gen.v4!()?
 	## ```
-	Gen :: [].{
+	From :: [].{
 
-		## A generator of UUIDs from an effectful source of 64-bit numbers,
-		## such as basic-cli's `Random.seed_u64!`, which reads the operating
-		## system's secure random number generator, as RFC 9562 recommends.
-		## The source's error passes through.
+		## UUIDs from an effectful source of 64-bit numbers, such as
+		## basic-cli's `Random.seed_u64!`, which reads the operating system's
+		## secure random number generator, as RFC 9562 recommends. The
+		## source's error passes through. Make one and reuse it.
 		##
 		## ```roc
-		## gen = Uuid.Gen.Sys.new(Random.seed_u64!)
+		## gen = Uuid.From.Eff.new(Random.seed_u64!)
 		## id = gen.v4!()?
 		## sorted_id = gen.v7!(now)?
 		## ```
-		Sys(err) :: { next! : () => Try(U64, err) }.{
-			new : (() => Try(U64, err)) -> Uuid.Gen.Sys(err)
-			new = |next!| Sys.{ next! }
+		Eff(err) :: { next! : () => Try(U64, err) }.{
+			new : (() => Try(U64, err)) -> Uuid.From.Eff(err)
+			new = |next!| Eff.{ next! }
 
 			## A version 4 UUID: 122 random bits.
-			v4! : Uuid.Gen.Sys(err) => Try(Uuid, err)
-			v4! = |gen| Ok(Uuid.v4_from(draw_sys!(gen)?))
+			v4! : Uuid.From.Eff(err) => Try(Uuid, err)
+			v4! = |gen| Ok(make_v4(draw_eff!(gen)?))
 
 			## A version 7 UUID: the Unix timestamp in milliseconds, then 74
 			## random bits. UUIDs made in different milliseconds sort by when
@@ -293,8 +260,8 @@ Uuid :: [Bits(U128)].{
 			## now = Utc.now!().to_millis_since_epoch()
 			## sorted_id = gen.v7!(now)?
 			## ```
-			v7! : Uuid.Gen.Sys(err), n => Try(Uuid, err) where [n.to_u64_try : n -> Try(U64, e)]
-			v7! = |gen, ms| Ok(Uuid.v7_from(draw_sys!(gen)?, ms))
+			v7! : Uuid.From.Eff(err), n => Try(Uuid, err) where [n.to_u64_try : n -> Try(U64, e)]
+			v7! = |gen, ms| Ok(make_v7(draw_eff!(gen)?, ms))
 
 			## A version 7 UUID that sorts after `previous`, even when it's made
 			## in the same millisecond or the clock has gone backwards,
@@ -302,10 +269,10 @@ Uuid :: [Bits(U128)].{
 			## timestamp count up within a millisecond. `ms` is as for `v7!`.
 			##
 			## When `previous` is from an earlier millisecond, or isn't a
-			## version 7 UUID (such as `Uuid.nil` to start), this is `v7!` with a
-			## random counter that leaves room to count. Otherwise it keeps the
-			## timestamp of `previous` and adds 1 to its counter, moving to the
-			## next millisecond if the counter is full.
+			## version 7 UUID (such as `Uuid.nil` to start), this is `v7!` with
+			## a random counter that leaves room to count. Otherwise it keeps
+			## the timestamp of `previous` and adds 1 to its counter, moving to
+			## the next millisecond if the counter is full.
 			##
 			## Because it always sorts after `previous`, a `previous` from the
 			## future (from a clock that was ahead, another machine, or a
@@ -318,64 +285,97 @@ Uuid :: [Bits(U128)].{
 			## var $last = Uuid.nil
 			## $last = gen.next_v7!($last, now)?
 			## ```
-			next_v7! : Uuid.Gen.Sys(err), Uuid, n => Try(Uuid, err) where [n.to_u64_try : n -> Try(U64, e)]
-			next_v7! = |gen, previous, ms| Ok(Uuid.next_v7_from(draw_sys!(gen)?, previous, ms))
+			next_v7! : Uuid.From.Eff(err), Uuid, n => Try(Uuid, err) where [n.to_u64_try : n -> Try(U64, e)]
+			next_v7! = |gen, previous, ms| Ok(make_next_v7(draw_eff!(gen)?, previous, ms))
 
-			## A version 8 UUID: 122 random bits. Use `Uuid.v8_from` to lay
-			## out your own.
-			v8! : Uuid.Gen.Sys(err) => Try(Uuid, err)
-			v8! = |gen| Ok(Uuid.v8_from(draw_sys!(gen)?))
+			## A version 8 UUID: 122 random bits. To lay out your own, use
+			## `From.Bits`.
+			v8! : Uuid.From.Eff(err) => Try(Uuid, err)
+			v8! = |gen| Ok(with_version(draw_eff!(gen)?, 8))
 		}
 
-		## A generator of UUIDs from a pure pseudo-random generator with a
+		## UUIDs from a pure pseudo-random generator with a
 		## `step : g -> (U64, g)` method, such as roc-prng's `Seed`. Each UUID
 		## comes back with the generator to use next. The methods work as
-		## `Gen.Sys`'s do.
+		## `From.Eff`'s do. Seed it from the platform's randomness, not the
+		## clock, and prefer `From.Eff` when UUIDs must be hard to guess.
 		##
 		## ```roc
-		## var $gen = Uuid.Gen.Seeded.new(Prng.seed(Random.seed_u64!()?))
+		## var $gen = Uuid.From.Pure.new(Prng.seed(Random.seed_u64!()?))
 		## (id, $gen) = $gen.v4()
 		## (sorted_id, $gen) = $gen.v7(now)
 		## ```
-		Seeded(g) :: { generator : g }.{
-			new : g -> Uuid.Gen.Seeded(g)
-			new = |generator| Seeded.{ generator }
+		Pure(g) :: { generator : g }.{
+			new : g -> Uuid.From.Pure(g)
+			new = |generator| Pure.{ generator }
 
-			## A version 4 UUID, as `Gen.Sys.v4!`, and the generator to use
+			## A version 4 UUID, as `From.Eff.v4!`, and the generator to use
 			## next
-			v4 : Uuid.Gen.Seeded(g) -> (Uuid, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g)]
+			v4 : Uuid.From.Pure(g) -> (Uuid, Uuid.From.Pure(g)) where [g.step : g -> (U64, g)]
 			v4 = |gen| {
-				(bits, next) = draw_seeded(gen)
-				(Uuid.v4_from(bits), next)
+				(bits, next) = draw_pure(gen)
+				(make_v4(bits), next)
 			}
 
-			## A version 7 UUID, as `Gen.Sys.v7!`, and the generator to use
+			## A version 7 UUID, as `From.Eff.v7!`, and the generator to use
 			## next
-			v7 : Uuid.Gen.Seeded(g), n -> (Uuid, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g), n.to_u64_try : n -> Try(U64, e)]
+			v7 : Uuid.From.Pure(g), n -> (Uuid, Uuid.From.Pure(g)) where [g.step : g -> (U64, g), n.to_u64_try : n -> Try(U64, e)]
 			v7 = |gen, ms| {
-				(bits, next) = draw_seeded(gen)
-				(Uuid.v7_from(bits, ms), next)
+				(bits, next) = draw_pure(gen)
+				(make_v7(bits, ms), next)
 			}
 
 			## A version 7 UUID that sorts after `previous`, as
-			## `Gen.Sys.next_v7!`, and the generator to use next
+			## `From.Eff.next_v7!`, and the generator to use next
 			##
 			## ```roc
 			## var $last = Uuid.nil
 			## ($last, $gen) = $gen.next_v7($last, now)
 			## ```
-			next_v7 : Uuid.Gen.Seeded(g), Uuid, n -> (Uuid, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g), n.to_u64_try : n -> Try(U64, e)]
+			next_v7 : Uuid.From.Pure(g), Uuid, n -> (Uuid, Uuid.From.Pure(g)) where [g.step : g -> (U64, g), n.to_u64_try : n -> Try(U64, e)]
 			next_v7 = |gen, previous, ms| {
-				(bits, next) = draw_seeded(gen)
-				(Uuid.next_v7_from(bits, previous, ms), next)
+				(bits, next) = draw_pure(gen)
+				(make_next_v7(bits, previous, ms), next)
 			}
 
-			## A version 8 UUID, as `Gen.Sys.v8!`, and the generator to use next
-			v8 : Uuid.Gen.Seeded(g) -> (Uuid, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g)]
+			## A version 8 UUID, as `From.Eff.v8!`, and the generator to use
+			## next
+			v8 : Uuid.From.Pure(g) -> (Uuid, Uuid.From.Pure(g)) where [g.step : g -> (U64, g)]
 			v8 = |gen| {
-				(bits, next) = draw_seeded(gen)
-				(Uuid.v8_from(bits), next)
+				(bits, next) = draw_pure(gen)
+				(with_version(bits, 8), next)
 			}
+		}
+
+		## UUIDs from 128 bits you already have, such as from another source
+		## of randomness or a test. The methods work as `From.Eff`'s do, and
+		## each uses the same bits, so make a new `From.Bits` for every UUID.
+		## The 6 bits at the version and variant positions are replaced.
+		##
+		## ```roc
+		## id = Uuid.From.Bits.new(0x9191_08f7_52d1_f320_5bac_f847_db41_48a8).v4()
+		## ```
+		Bits :: { bits : U128 }.{
+			new : U128 -> Uuid.From.Bits
+			new = |bits| Bits.{ bits }
+
+			## A version 4 UUID from these bits
+			v4 : Uuid.From.Bits -> Uuid
+			v4 = |{ bits }| make_v4(bits)
+
+			## A version 7 UUID from these bits, as `From.Eff.v7!`: the time,
+			## then the low 80 bits
+			v7 : Uuid.From.Bits, n -> Uuid where [n.to_u64_try : n -> Try(U64, e)]
+			v7 = |{ bits }, ms| make_v7(bits, ms)
+
+			## A version 7 UUID that sorts after `previous`, from these bits, as
+			## `From.Eff.next_v7!`
+			next_v7 : Uuid.From.Bits, Uuid, n -> Uuid where [n.to_u64_try : n -> Try(U64, e)]
+			next_v7 = |{ bits }, previous, ms| make_next_v7(bits, previous, ms)
+
+			## A version 8 UUID: these bits, laid out however you need
+			v8 : Uuid.From.Bits -> Uuid
+			v8 = |{ bits }| with_version(bits, 8)
 		}
 	}
 
@@ -403,6 +403,31 @@ Uuid :: [Bits(U128)].{
 
 # Everything below is private to this module
 
+make_v4 : U128 -> Uuid
+make_v4 = |bits| with_version(bits, 4)
+
+make_v7 : U128, n -> Uuid where [n.to_u64_try : n -> Try(U64, e)]
+make_v7 = |bits, ms| {
+	time = to_ms(ms).to_u128().bitwise_and(0xFFFF_FFFF_FFFF).shl_wrap(80)
+	with_version(time.bitwise_or(bits.bitwise_and(low_80_bits)), 7)
+}
+
+make_next_v7 : U128, Uuid, n -> Uuid where [n.to_u64_try : n -> Try(U64, e)]
+make_next_v7 = |bits, previous, ms| {
+	time = to_ms(ms).bitwise_and(0xFFFF_FFFF_FFFF)
+	match previous.unix_ms() {
+		Ok(previous_ms) if time <= previous_ms => {
+			counter = previous.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF)
+			if counter < 0xFFF {
+				v7_parts(previous_ms, counter + 1, bits)
+			} else {
+				v7_parts(previous_ms.plus_wrap(1).bitwise_and(0xFFFF_FFFF_FFFF), fresh_counter(bits), bits)
+			}
+		}
+		_ => v7_parts(time, fresh_counter(bits), bits)
+	}
+}
+
 ## Milliseconds as a U64, with times before 1970 and past what a U64 holds
 ## as 0
 to_ms : n -> U64 where [n.to_u64_try : n -> Try(U64, e)]
@@ -412,21 +437,21 @@ to_ms = |ms|
 		Err(_) => 0
 	}
 
-## 128 random bits from the source in a `Gen.Sys`
-draw_sys! : Uuid.Gen.Sys(err) => Try(U128, err)
-draw_sys! = |gen| {
+## 128 random bits from the source in a `From.Eff`
+draw_eff! : Uuid.From.Eff(err) => Try(U128, err)
+draw_eff! = |gen| {
 	hi = (gen.next!)()?
 	lo = (gen.next!)()?
 	Ok(join(hi, lo))
 }
 
-## 128 random bits from the generator in a `Gen.Seeded`, and the `Gen.Seeded`
+## 128 random bits from the generator in a `From.Pure`, and the `From.Pure`
 ## to use next
-draw_seeded : Uuid.Gen.Seeded(g) -> (U128, Uuid.Gen.Seeded(g)) where [g.step : g -> (U64, g)]
-draw_seeded = |{ generator }| {
+draw_pure : Uuid.From.Pure(g) -> (U128, Uuid.From.Pure(g)) where [g.step : g -> (U64, g)]
+draw_pure = |{ generator }| {
 	(hi, after_hi) = generator.step()
 	(lo, after_lo) = after_hi.step()
-	(join(hi, lo), Uuid.Gen.Seeded.new(after_lo))
+	(join(hi, lo), Uuid.From.Pure.new(after_lo))
 }
 
 version_for : U8 -> Uuid.Version
@@ -606,10 +631,10 @@ split_mix = |seed| SplitMix(seed)
 ## `count` pseudo-random 128-bit values
 samples : U64, U64 -> List(U128)
 samples = |count, seed| {
-	var $gen = Uuid.Gen.Seeded.new(split_mix(seed))
+	var $gen = Uuid.From.Pure.new(split_mix(seed))
 	var $out = []
 	for _ in List.from_iter((0.U64).until(count)) {
-		(bits, $gen) = draw_seeded($gen)
+		(bits, $gen) = draw_pure($gen)
 		$out = $out.append(bits)
 	}
 	$out
@@ -641,23 +666,23 @@ lowercase = |text| Str.from_utf8_lossy(text.to_utf8().map(|c| if (c >= 'A' and c
 
 # The v4 and v7 examples come out of `v4` and `v7` from their bits, even when
 # the version and variant positions hold something else
-expect Uuid.v4_from(0x9191_08f7_52d1_f320_5bac_f847_db41_48a8) == parse("919108f7-52d1-4320-9bac-f847db4148a8")
+expect Uuid.From.Bits.new(0x9191_08f7_52d1_f320_5bac_f847_db41_48a8).v4() == parse("919108f7-52d1-4320-9bac-f847db4148a8")
 
-expect Uuid.v7_from(0xFFFF_FFFF_FFFF_0CC3_D8C4_DC0C_0C07_398F, 0x017F_22E2_79B0) == parse("017F22E2-79B0-7CC3-98C4-DC0C0C07398F")
+expect Uuid.From.Bits.new(0xFFFF_FFFF_FFFF_0CC3_D8C4_DC0C_0C07_398F).v7(0x017F_22E2_79B0) == parse("017F22E2-79B0-7CC3-98C4-DC0C0C07398F")
 
 expect parse("017F22E2-79B0-7CC3-98C4-DC0C0C07398F").unix_ms() == Ok(0x017F_22E2_79B0)
 
 expect parse("919108f7-52d1-4320-9bac-f847db4148a8").unix_ms() == Err(NotV7)
 
 # The v3 example, from RFC 9562 appendix A.2
-expect Uuid.v3(Uuid.namespace_dns, "www.example.com".to_utf8()) == parse("5df41881-3aed-3515-88a7-2f4a814cf09e")
+expect Uuid.Namespace.dns.v3("www.example.com".to_utf8()) == parse("5df41881-3aed-3515-88a7-2f4a814cf09e")
 
-expect Uuid.v3(Uuid.namespace_url, "".to_utf8()).version() == V3
+expect Uuid.Namespace.url.v3("".to_utf8()).version() == V3
 
 # The v5 example, from RFC 9562 appendix A.4
-expect Uuid.v5(Uuid.namespace_dns, "www.example.com".to_utf8()) == parse("2ed6657d-e927-568b-95e1-2665a8aea6a2")
+expect Uuid.Namespace.dns.v5("www.example.com".to_utf8()) == parse("2ed6657d-e927-568b-95e1-2665a8aea6a2")
 
-expect Uuid.v5(Uuid.namespace_x500, "".to_utf8()).version() == V5
+expect Uuid.Namespace.x500.v5("".to_utf8()).version() == V5
 
 # Nil and max
 expect Uuid.nil.to_str() == "00000000-0000-0000-0000-000000000000"
@@ -700,22 +725,22 @@ expect
 expect Uuid.from_u128(0x017F_22E2_79B0_7CC3_C8C4_DC0C_0C07_398F).unix_ms() == Err(NotV7)
 
 # The four namespaces from RFC 9562 section 6.6
-expect Uuid.namespace_dns.to_str() == "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+expect Uuid.Namespace.dns.to_uuid().to_str() == "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
 
-expect Uuid.namespace_url.to_str() == "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+expect Uuid.Namespace.url.to_uuid().to_str() == "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
 
-expect Uuid.namespace_oid.to_str() == "6ba7b812-9dad-11d1-80b4-00c04fd430c8"
+expect Uuid.Namespace.oid.to_uuid().to_str() == "6ba7b812-9dad-11d1-80b4-00c04fd430c8"
 
-expect Uuid.namespace_x500.to_str() == "6ba7b814-9dad-11d1-80b4-00c04fd430c8"
+expect Uuid.Namespace.x500.to_uuid().to_str() == "6ba7b814-9dad-11d1-80b4-00c04fd430c8"
 
 # v3 and v5 in every namespace, checked against Python's uuid3 and uuid5
-expect Uuid.v5(Uuid.namespace_url, "https://example.com/".to_utf8()).to_str() == "dd2c1780-811a-5296-81c5-178a0ef488bc"
+expect Uuid.Namespace.url.v5("https://example.com/".to_utf8()).to_str() == "dd2c1780-811a-5296-81c5-178a0ef488bc"
 
-expect Uuid.v5(Uuid.namespace_oid, "1.3.6.1".to_utf8()).to_str() == "1447fa61-5277-5fef-a9b3-fbc6e44f4af3"
+expect Uuid.Namespace.oid.v5("1.3.6.1".to_utf8()).to_str() == "1447fa61-5277-5fef-a9b3-fbc6e44f4af3"
 
-expect Uuid.v5(Uuid.namespace_x500, "cn=John Doe,o=Acme".to_utf8()).to_str() == "56427d5b-cb4e-5e1f-a034-040025b6d964"
+expect Uuid.Namespace.x500.v5("cn=John Doe,o=Acme".to_utf8()).to_str() == "56427d5b-cb4e-5e1f-a034-040025b6d964"
 
-expect Uuid.v3(Uuid.namespace_url, "https://example.com/".to_utf8()).to_str() == "b9dcdff8-af4a-365d-8043-0f8361942709"
+expect Uuid.Namespace.url.v3("https://example.com/".to_utf8()).to_str() == "b9dcdff8-af4a-365d-8043-0f8361942709"
 
 # from_bytes takes exactly 16 bytes
 expect Uuid.from_bytes(List.repeat(1, 17)) == Err(WrongLength(17))
@@ -725,28 +750,28 @@ expect Uuid.from_bytes(List.repeat(1, 15)) == Err(WrongLength(15))
 # Ordering is strict, and List.sort sorts by it
 expect !(Uuid.nil < Uuid.nil) and !(Uuid.max > Uuid.max) and Uuid.nil <= Uuid.nil
 
-expect [Uuid.max, Uuid.nil, Uuid.v7_from(0, 5), Uuid.v7_from(0, 4)].sort() == [Uuid.nil, Uuid.v7_from(0, 4), Uuid.v7_from(0, 5), Uuid.max]
+expect [Uuid.max, Uuid.nil, Uuid.From.Bits.new(0).v7(5), Uuid.From.Bits.new(0).v7(4)].sort() == [Uuid.nil, Uuid.From.Bits.new(0).v7(4), Uuid.From.Bits.new(0).v7(5), Uuid.max]
 
 # A 32-digit form with more after it reports where the UUID ends
 expect Uuid.from_str_lenient("f81d4fae7dec11d0a76500a0c91e6bf60") == Err(InvalidUuid({ index: 32, problem: WrongLength }))
 
-# A seeded Gen takes two fresh draws for each call, high then low
+# A From.Pure takes two fresh draws for each call, high then low
 expect {
 	g0 = split_mix(11)
 	(a, g1) = g0.step()
 	(b, g2) = g1.step()
 	(c, g3) = g2.step()
 	(d, _) = g3.step()
-	(first, after_first) = draw_seeded(Uuid.Gen.Seeded.new(g0))
-	(second, _) = draw_seeded(after_first)
+	(first, after_first) = draw_pure(Uuid.From.Pure.new(g0))
+	(second, _) = draw_pure(after_first)
 	first == join(a, b) and second == join(c, d)
 }
 
-# A seeded Gen's v4, v7, next_v7 and v8 use the next bits, and move on
+# A From.Pure's v4, v7, next_v7 and v8 use the next bits, and move on
 expect {
-	gen = Uuid.Gen.Seeded.new(split_mix(12))
-	(bits, after_bits) = draw_seeded(gen)
-	(next_bits, _) = draw_seeded(after_bits)
+	gen = Uuid.From.Pure.new(split_mix(12))
+	(bits, after_bits) = draw_pure(gen)
+	(next_bits, _) = draw_pure(after_bits)
 	(a, after_a) = gen.v4()
 	(b, after_b) = gen.v7(5000)
 	(c, after_c) = gen.next_v7(Uuid.nil, 5000)
@@ -754,17 +779,17 @@ expect {
 	(a_next, _) = after_a.v4()
 	(b_next, _) = after_b.v7(5000)
 	(c_next, _) = after_c.next_v7(c, 5000)
-	a == Uuid.v4_from(bits) and d == Uuid.v8_from(bits) and b == Uuid.v7_from(bits, 5000) and c == Uuid.next_v7_from(bits, Uuid.nil, 5000)
-		and a_next == Uuid.v4_from(next_bits) and b_next == Uuid.v7_from(next_bits, 5000) and c_next == Uuid.next_v7_from(next_bits, c, 5000)
+	a == Uuid.From.Bits.new(bits).v4() and d == Uuid.From.Bits.new(bits).v8() and b == Uuid.From.Bits.new(bits).v7(5000) and c == Uuid.From.Bits.new(bits).next_v7(Uuid.nil, 5000)
+		and a_next == Uuid.From.Bits.new(next_bits).v4() and b_next == Uuid.From.Bits.new(next_bits).v7(5000) and c_next == Uuid.From.Bits.new(next_bits).next_v7(c, 5000)
 }
 
 # next_v7 adds exactly 1 to the counter it reads, up to the last value
 expect {
-	base = Uuid.v7_from(0, 5000).to_u128()
+	base = Uuid.From.Bits.new(0).v7(5000).to_u128()
 	[0x000, 0x5A5, 0x800, 0xFFE].all(
 		|counter| {
 			previous = Uuid.from_u128(base.bitwise_or(counter.shl_wrap(64)))
-			next = Uuid.next_v7_from(0, previous, 5000)
+			next = Uuid.From.Bits.new(0).next_v7(previous, 5000)
 			next.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF) == counter + 1 and next.unix_ms() == Ok(5000)
 		},
 	)
@@ -772,33 +797,33 @@ expect {
 
 # After a full counter: the next millisecond, and a fresh counter below 0x800
 expect {
-	full = Uuid.from_u128(Uuid.v7_from(0, 5000).to_u128().bitwise_or((0xFFF.U128).shl_wrap(64)))
-	next = Uuid.next_v7_from(Uuid.max.to_u128(), full, 5000)
+	full = Uuid.from_u128(Uuid.From.Bits.new(0).v7(5000).to_u128().bitwise_or((0xFFF.U128).shl_wrap(64)))
+	next = Uuid.From.Bits.new(Uuid.max.to_u128()).next_v7(full, 5000)
 	counter = next.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF)
 	next.unix_ms() == Ok(5001) and counter == 0x7FF
 }
 
 # The fresh counter comes from the 11 bits above rand_b, not from rand_b
 expect {
-	only_rand_b = Uuid.next_v7_from(0x3FFF_FFFF_FFFF_FFFF, Uuid.nil, 5000)
-	only_counter = Uuid.next_v7_from((0x7FF.U128).shl_wrap(62), Uuid.nil, 5000)
+	only_rand_b = Uuid.From.Bits.new(0x3FFF_FFFF_FFFF_FFFF).next_v7(Uuid.nil, 5000)
+	only_counter = Uuid.From.Bits.new((0x7FF.U128).shl_wrap(62)).next_v7(Uuid.nil, 5000)
 	only_rand_b.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF) == 0
 		and only_counter.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF) == 0x7FF
 		and only_counter.to_u128().bitwise_and(0x3FFF_FFFF_FFFF_FFFF) == 0
 }
 
 # next_v7 keeps all 48 bits of the time
-expect Uuid.next_v7_from(0, Uuid.nil, 0xFFFF_FFFF_FF00).unix_ms() == Ok(0xFFFF_FFFF_FF00)
+expect Uuid.From.Bits.new(0).next_v7(Uuid.nil, 0xFFFF_FFFF_FF00).unix_ms() == Ok(0xFFFF_FFFF_FF00)
 
-expect Uuid.next_v7_from(0, Uuid.v7_from(0, 0xF000_0000_0000), 0xF000_0000_0001).unix_ms() == Ok(0xF000_0000_0001)
+expect Uuid.From.Bits.new(0).next_v7(Uuid.From.Bits.new(0).v7(0xF000_0000_0000), 0xF000_0000_0001).unix_ms() == Ok(0xF000_0000_0001)
 
 # v4, v7 and v8 always set their version and the RFC variant, and keep every
 # other bit they're given
 expect samples(500, 1).all(
 	|bits| {
-		a = Uuid.v4_from(bits)
-		b = Uuid.v8_from(bits)
-		c = Uuid.v7_from(bits, bits.to_u64_wrap())
+		a = Uuid.From.Bits.new(bits).v4()
+		b = Uuid.From.Bits.new(bits).v8()
+		c = Uuid.From.Bits.new(bits).v7(bits.to_u64_wrap())
 		keep = 0xFFFF_FFFF_FFFF_0FFF_3FFF_FFFF_FFFF_FFFF
 		a.version() == V4 and a.variant() == Rfc9562 and a.to_u128().bitwise_and(keep) == bits.bitwise_and(keep)
 			and b.version() == V8 and b.variant() == Rfc9562 and b.to_u128().bitwise_and(keep) == bits.bitwise_and(keep)
@@ -888,7 +913,7 @@ expect Uuid.from_str_lenient("{}") == Err(InvalidUuid({ index: 1, problem: Wrong
 # Ordering is RFC byte order, and v7 sorts by time
 expect Uuid.nil < Uuid.max and Uuid.max > Uuid.nil and Uuid.nil <= Uuid.nil and Uuid.max >= Uuid.max
 
-expect Uuid.v7_from(Uuid.max.to_u128(), 1000) < Uuid.v7_from(0, 1001)
+expect Uuid.From.Bits.new(Uuid.max.to_u128()).v7(1000) < Uuid.From.Bits.new(0).v7(1001)
 
 # Uuid works as a Dict key
 expect {
@@ -905,13 +930,13 @@ expect Str.inspect(Uuid.nil) == "Uuid(00000000-0000-0000-0000-000000000000)"
 # repeats and going backwards, and always a v7 with a sensible timestamp
 expect {
 	var $mix = split_mix(7)
-	var $gen = Uuid.Gen.Seeded.new(split_mix(8))
+	var $gen = Uuid.From.Pure.new(split_mix(8))
 	var $last = Uuid.nil
 	var $ms = 1_700_000_000_000.U64
 	var $ok = True
 	for _ in List.from_iter((0.U64).until(3000)) {
 		(r, $mix) = $mix.step()
-		(bits, $gen) = draw_seeded($gen)
+		(bits, $gen) = draw_pure($gen)
 		# Mostly the same millisecond, sometimes forward, sometimes backward
 		$ms =
 			match r % 10 {
@@ -919,7 +944,7 @@ expect {
 				1 => $ms - r % 20
 				_ => $ms
 			}
-		next = Uuid.next_v7_from(bits, $last, $ms)
+		next = Uuid.From.Bits.new(bits).next_v7($last, $ms)
 		previous_ms = $last.unix_ms() ?? 0
 		if !(next > $last and next.version() == V7 and next.variant() == Rfc9562 and (next.unix_ms() ?? 0) >= previous_ms) {
 			$ok = False
@@ -932,29 +957,29 @@ expect {
 
 # A new millisecond takes the new time; an earlier one keeps the last time
 expect {
-	first = Uuid.next_v7_from(0, Uuid.nil, 5000)
-	later = Uuid.next_v7_from(0, first, 6000)
-	earlier = Uuid.next_v7_from(0, later, 4000)
+	first = Uuid.From.Bits.new(0).next_v7(Uuid.nil, 5000)
+	later = Uuid.From.Bits.new(0).next_v7(first, 6000)
+	earlier = Uuid.From.Bits.new(0).next_v7(later, 4000)
 	first.unix_ms() == Ok(5000) and later.unix_ms() == Ok(6000) and earlier.unix_ms() == Ok(6000) and earlier > later
 }
 
 # A fresh counter leaves room for 2048 more in the same millisecond
 expect {
-	start = Uuid.next_v7_from(Uuid.max.to_u128(), Uuid.nil, 5000)
+	start = Uuid.From.Bits.new(Uuid.max.to_u128()).next_v7(Uuid.nil, 5000)
 	start.to_u128().shr_zf_wrap(64).bitwise_and(0xFFF) == 0x7FF
 }
 
 # A full counter moves to the next millisecond
 expect {
-	full = Uuid.from_u128(Uuid.v7_from(0, 5000).to_u128().bitwise_or((0xFFF.U128).shl_wrap(64)))
-	next = Uuid.next_v7_from(0, full, 5000)
+	full = Uuid.from_u128(Uuid.From.Bits.new(0).v7(5000).to_u128().bitwise_or((0xFFF.U128).shl_wrap(64)))
+	next = Uuid.From.Bits.new(0).next_v7(full, 5000)
 	next.unix_ms() == Ok(5001) and next > full
 }
 
 # The time can be any integer type from U64 up, and a time before 1970 or
 # past what a U64 holds counts as 0
-expect Uuid.v7_from(0, 5000.I128).unix_ms() == Ok(5000) and Uuid.v7_from(0, 5000.U128).unix_ms() == Ok(5000) and Uuid.v7_from(0, 5000.I64).unix_ms() == Ok(5000)
+expect Uuid.From.Bits.new(0).v7(5000.I128).unix_ms() == Ok(5000) and Uuid.From.Bits.new(0).v7(5000.U128).unix_ms() == Ok(5000) and Uuid.From.Bits.new(0).v7(5000.I64).unix_ms() == Ok(5000)
 
-expect Uuid.v7_from(0, -1.I128).unix_ms() == Ok(0) and Uuid.v7_from(0, 0x1_0000_0000_0000_0000.U128).unix_ms() == Ok(0)
+expect Uuid.From.Bits.new(0).v7(-1.I128).unix_ms() == Ok(0) and Uuid.From.Bits.new(0).v7(0x1_0000_0000_0000_0000.U128).unix_ms() == Ok(0)
 
-expect Uuid.next_v7_from(0, Uuid.nil, -5.I64).unix_ms() == Ok(0)
+expect Uuid.From.Bits.new(0).next_v7(Uuid.nil, -5.I64).unix_ms() == Ok(0)

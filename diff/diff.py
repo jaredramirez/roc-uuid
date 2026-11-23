@@ -273,7 +273,7 @@ def main():
                 print(f"MISMATCH for {line!r}\n  got:  {answer}\n  want: {want}", file=sys.stderr)
     if len(set(random_answers)) != len(random_answers):
         mismatches += 1
-        print("Uuid.Gen.system repeated a UUID", file=sys.stderr)
+        print("Uuid.From.Eff repeated a UUID", file=sys.stderr)
 
     print(f"{len(cases)} cases from {args.count} random inputs, seed {seed}: {mismatches} mismatches")
     return 1 if mismatches else 0

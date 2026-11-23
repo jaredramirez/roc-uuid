@@ -13,13 +13,13 @@ import uuid.Uuid
 ## against Python's uuid module. Numbers and bytes travel as hexadecimal.
 ##
 ## - `B <bits> <ms>`: the UUID with those bits, as text, URN, bytes, version
-##   and variant, then `v4_from`, `v7_from` and `v8_from` of the same bits
+##   and variant, then `v4`, `v7` and `v8` from `From.Bits` of the same bits
 ## - `N3 <namespace> <name>`, `N5 <namespace> <name>`: `v3` or `v5` of a
 ##   name in a namespace
 ## - `P <text>`: `from_str` and `from_str_lenient` of the text
-## - `A <previous> <ms> <bits>`: `next_v7_from`
+## - `A <previous> <ms> <bits>`: `From.Bits.next_v7`
 ## - `NS`: the four namespaces
-## - `R`: a `v4` from `Uuid.Gen.Sys` with the platform's randomness
+## - `R`: a `v4` from `Uuid.From.Eff` with the platform's randomness
 main! = |_args| {
 	input = Stdin.read_to_end!()?
 	var $out = []
@@ -45,25 +45,25 @@ answer! = |words|
 				hex_bytes(uuid.to_bytes()),
 				version_str(uuid.version()),
 				variant_str(uuid.variant()),
-				Uuid.v4_from(bits).to_str(),
-				Uuid.v7_from(bits, ms).to_str(),
-				Uuid.v8_from(bits).to_str(),
+				Uuid.From.Bits.new(bits).v4().to_str(),
+				Uuid.From.Bits.new(bits).v7(ms).to_str(),
+				Uuid.From.Bits.new(bits).v8().to_str(),
 			]
 				|> Str.join_with(" ")
 		}
-		["N3", namespace_hex, name_hex] => Uuid.v3(Uuid.from_u128(hex_u128(namespace_hex)), unhex(name_hex)).to_str()
-		["N3", namespace_hex] => Uuid.v3(Uuid.from_u128(hex_u128(namespace_hex)), []).to_str()
-		["N5", namespace_hex, name_hex] => Uuid.v5(Uuid.from_u128(hex_u128(namespace_hex)), unhex(name_hex)).to_str()
-		["N5", namespace_hex] => Uuid.v5(Uuid.from_u128(hex_u128(namespace_hex)), []).to_str()
+		["N3", namespace_hex, name_hex] => Uuid.Namespace.new(Uuid.from_u128(hex_u128(namespace_hex))).v3(unhex(name_hex)).to_str()
+		["N3", namespace_hex] => Uuid.Namespace.new(Uuid.from_u128(hex_u128(namespace_hex))).v3([]).to_str()
+		["N5", namespace_hex, name_hex] => Uuid.Namespace.new(Uuid.from_u128(hex_u128(namespace_hex))).v5(unhex(name_hex)).to_str()
+		["N5", namespace_hex] => Uuid.Namespace.new(Uuid.from_u128(hex_u128(namespace_hex))).v5([]).to_str()
 		["P", text_hex] => {
 			text = Str.from_utf8_lossy(unhex(text_hex))
 			"${result_str(Uuid.from_str(text))} ${result_str(Uuid.from_str_lenient(text))}"
 		}
 		["P"] => "${result_str(Uuid.from_str(""))} ${result_str(Uuid.from_str_lenient(""))}"
-		["A", previous_hex, ms_hex, bits_hex] => Uuid.next_v7_from(hex_u128(bits_hex), Uuid.from_u128(hex_u128(previous_hex)), hex_u128(ms_hex).to_u64_wrap()).to_str()
-		["NS"] => [Uuid.namespace_dns, Uuid.namespace_url, Uuid.namespace_oid, Uuid.namespace_x500].map(|u| u.to_str()) |> Str.join_with(" ")
+		["A", previous_hex, ms_hex, bits_hex] => Uuid.From.Bits.new(hex_u128(bits_hex)).next_v7(Uuid.from_u128(hex_u128(previous_hex)), hex_u128(ms_hex).to_u64_wrap()).to_str()
+		["NS"] => [Uuid.Namespace.dns, Uuid.Namespace.url, Uuid.Namespace.oid, Uuid.Namespace.x500].map(|ns| ns.to_uuid().to_str()) |> Str.join_with(" ")
 		["R"] =>
-			match Uuid.Gen.Sys.new(Random.seed_u64!).v4!() {
+			match Uuid.From.Eff.new(Random.seed_u64!).v4!() {
 				Ok(uuid) => uuid.to_str()
 				Err(_) => "random-error"
 			}

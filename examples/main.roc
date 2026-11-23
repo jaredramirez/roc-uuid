@@ -13,7 +13,7 @@ import uuid.Uuid
 ## Every example from the README, so CI checks that they compile and run
 main! = |_args| {
 	# Random bits from the operating system
-	gen = Uuid.Gen.Sys.new(Random.seed_u64!)
+	gen = Uuid.From.Eff.new(Random.seed_u64!)
 
 	# Version 4: random
 	id = gen.v4!()?
@@ -29,7 +29,7 @@ main! = |_args| {
 	Stdout.line!("parsed: ${parsed.to_str()}")?
 
 	# A pure generator, seeded from the platform's randomness
-	var $gen = Uuid.Gen.Seeded.new(Prng.seed(Random.seed_u64!()?))
+	var $gen = Uuid.From.Pure.new(Prng.seed(Random.seed_u64!()?))
 	(first, $gen) = $gen.v4()
 	(second, $gen) = $gen.v4()
 	Stdout.line!("seeded v4s: ${first.to_str()} ${second.to_str()}")?
@@ -42,10 +42,16 @@ main! = |_args| {
 	}
 
 	# Name-based
-	by_name = Uuid.v5(Uuid.namespace_dns, "www.example.com".to_utf8())
+	by_name = Uuid.Namespace.dns.v5("www.example.com".to_utf8())
 	Stdout.line!("v5: ${by_name.to_str()}")?
-	by_name_md5 = Uuid.v3(Uuid.namespace_dns, "www.example.com".to_utf8())
+	by_name_md5 = Uuid.Namespace.dns.v3("www.example.com".to_utf8())
 	Stdout.line!("v3: ${by_name_md5.to_str()}")?
+
+	# Fixed bits, such as in tests
+	fixed = Uuid.From.Bits.new(0x9191_08f7_52d1_f320_5bac_f847_db41_48a8).v4()
+	Stdout.line!("fixed v4: ${fixed.to_str()}")?
+	custom = Uuid.From.Bits.new(0x1234).v8()
+	Stdout.line!("custom v8: ${custom.to_str()}")?
 
 	# Parsing, printing and the exposed types
 	lenient = Uuid.from_str_lenient("{F81D4FAE-7DEC-11D0-A765-00A0C91E6BF6}")?

@@ -36,9 +36,10 @@ test! = |{ data, previous, ms }| {
 	}
 
 	bits = data.take_first(16).fold(0.U128, |n, byte| n.shl_wrap(8).bitwise_or(byte.to_u128()))
-	v4 = Uuid.v4_from(bits)
-	v7 = Uuid.v7_from(bits, ms)
-	v8 = Uuid.v8_from(bits)
+	from_bits = Uuid.From.Bits.new(bits)
+	v4 = from_bits.v4()
+	v7 = from_bits.v7(ms)
+	v8 = from_bits.v8()
 	for (uuid, version) in [(v4, V4), (v7, V7), (v8, V8)] {
 		if uuid.version() != version or uuid.variant() != Rfc9562 or Uuid.from_bytes(uuid.to_bytes()) != Ok(uuid) {
 			crash "a generated UUID has the wrong version, variant or bytes"
@@ -50,7 +51,7 @@ test! = |{ data, previous, ms }| {
 
 	# next_v7 moves forward, except past the last millisecond in the year 10889
 	before = Uuid.from_u128(previous)
-	after = Uuid.next_v7_from(bits, before, ms)
+	after = from_bits.next_v7(before, ms)
 	at_the_end = before.unix_ms() == Ok(0xFFFF_FFFF_FFFF) and previous.shr_zf_wrap(64).bitwise_and(0xFFF) == 0xFFF
 	if after.version() != V7 or after.variant() != Rfc9562 {
 		crash "next_v7 made something other than a v7"
