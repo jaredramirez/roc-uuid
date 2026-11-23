@@ -27,10 +27,16 @@ import pf.Utc
 import uuid.Uuid
 
 main! = |_args| {
-	Stdout.line!(Uuid.v4(Uuid.random_bits!(Random.seed_u64!)?).to_str())?
+	# Version 4: random
+	bits = Uuid.random_bits!(Random.seed_u64!)?
+	id = Uuid.v4(bits)
+	Stdout.line!("v4: ${id.to_str()}")?
 
+	# Version 7: random, but sorted by time
 	now = Utc.now!().to_millis_since_epoch().to_u64_wrap()
-	Stdout.line!(Uuid.v7(now, Uuid.random_bits!(Random.seed_u64!)?).to_str())?
+	sorted_id = Uuid.v7(now, Uuid.random_bits!(Random.seed_u64!)?)
+	Stdout.line!("v7: ${sorted_id.to_str()}")?
+
 	Ok({})
 }
 ```

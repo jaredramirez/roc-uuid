@@ -12,15 +12,20 @@ import uuid.Uuid
 
 ## Every example from the README, so CI checks that they compile and run
 main! = |_args| {
-	# Random UUIDs, with fresh random bits for each one
-	Stdout.line!(Uuid.v4(Uuid.random_bits!(Random.seed_u64!)?).to_str())?
+	# Version 4: random
+	bits = Uuid.random_bits!(Random.seed_u64!)?
+	id = Uuid.v4(bits)
+	Stdout.line!("v4: ${id.to_str()}")?
+
+	# Version 7: random, but sorted by time
 	now = Utc.now!().to_millis_since_epoch().to_u64_wrap()
-	Stdout.line!(Uuid.v7(now, Uuid.random_bits!(Random.seed_u64!)?).to_str())?
+	sorted_id = Uuid.v7(now, Uuid.random_bits!(Random.seed_u64!)?)
+	Stdout.line!("v7: ${sorted_id.to_str()}")?
 
 	# A pure generator, seeded from the platform's randomness
 	var $seed = Prng.seed(Random.seed_u64!()?)
-	(bits, $seed) = Uuid.random_bits($seed)
-	Stdout.line!(Uuid.v4(bits).to_str())?
+	(seeded_bits, $seed) = Uuid.random_bits($seed)
+	Stdout.line!(Uuid.v4(seeded_bits).to_str())?
 
 	# Version 7 in order within a millisecond
 	var $last = Uuid.nil
@@ -34,12 +39,12 @@ main! = |_args| {
 	Stdout.line!(Uuid.v3(Uuid.namespace_dns, "www.example.com".to_utf8()).to_str())?
 
 	# Parsing, printing and the exposed types
-	id = Uuid.from_str_lenient("{F81D4FAE-7DEC-11D0-A765-00A0C91E6BF6}")?
-	Stdout.line!("${id.to_str()} ${id.to_urn()} ${describe(id.version())}")?
+	parsed = Uuid.from_str_lenient("{F81D4FAE-7DEC-11D0-A765-00A0C91E6BF6}")?
+	Stdout.line!("${parsed.to_str()} ${parsed.to_urn()} ${describe(parsed.version())}")?
 	Stdout.line!(Str.inspect(Uuid.from_str("f81d4fae7dec11d0a76500a0c91e6bf6")))?
 
 	# Sorting
-	sorted = [Uuid.max, Uuid.nil, id].sort()
+	sorted = [Uuid.max, Uuid.nil, parsed].sort()
 	Stdout.line!(sorted.map(|u| u.to_str()) |> Str.join_with(" < "))?
 	Ok({})
 }
