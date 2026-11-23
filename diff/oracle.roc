@@ -13,13 +13,13 @@ import uuid.Uuid
 ## against Python's uuid module. Numbers and bytes travel as hexadecimal.
 ##
 ## - `B <bits> <ms>`: the UUID with those bits, as text, URN, bytes, version
-##   and variant, then `v4`, `v7` and `v8` from `From.Bits` of the same bits
+##   and variant, then `v4`, `v7` and `v8` from `Bits` of the same bits
 ## - `N3 <namespace> <name>`, `N5 <namespace> <name>`: `v3` or `v5` of a
 ##   name in a namespace
 ## - `P <text>`: `from_str` and `from_str_lenient` of the text
-## - `A <previous> <ms> <bits>`: `From.Bits.next_v7`
+## - `A <previous> <ms> <bits>`: `Bits.next_v7`
 ## - `NS`: the four namespaces
-## - `R`: a `v4` from `Uuid.From.Eff` with the platform's randomness
+## - `R`: a `v4` from `Uuid.Eff` with the platform's randomness
 main! = |_args| {
 	input = Stdin.read_to_end!()?
 	var $out = []
@@ -45,9 +45,9 @@ answer! = |words|
 				hex_bytes(uuid.to_bytes()),
 				version_str(uuid.version()),
 				variant_str(uuid.variant()),
-				Uuid.From.Bits.new(bits).v4().to_str(),
-				Uuid.From.Bits.new(bits).v7(ms).to_str(),
-				Uuid.From.Bits.new(bits).v8().to_str(),
+				Uuid.Bits.new(bits).v4().to_str(),
+				Uuid.Bits.new(bits).v7(ms).to_str(),
+				Uuid.Bits.new(bits).v8().to_str(),
 			]
 				|> Str.join_with(" ")
 		}
@@ -60,10 +60,10 @@ answer! = |words|
 			"${result_str(Uuid.from_str(text))} ${result_str(Uuid.from_str_lenient(text))}"
 		}
 		["P"] => "${result_str(Uuid.from_str(""))} ${result_str(Uuid.from_str_lenient(""))}"
-		["A", previous_hex, ms_hex, bits_hex] => Uuid.From.Bits.new(hex_u128(bits_hex)).next_v7(Uuid.from_u128(hex_u128(previous_hex)), hex_u128(ms_hex).to_u64_wrap()).to_str()
+		["A", previous_hex, ms_hex, bits_hex] => Uuid.Bits.new(hex_u128(bits_hex)).next_v7(Uuid.from_u128(hex_u128(previous_hex)), hex_u128(ms_hex).to_u64_wrap()).to_str()
 		["NS"] => [Uuid.Namespace.dns, Uuid.Namespace.url, Uuid.Namespace.oid, Uuid.Namespace.x500].map(|ns| ns.to_uuid().to_str()) |> Str.join_with(" ")
 		["R"] =>
-			match Uuid.From.Eff.new(Random.seed_u64!).v4!() {
+			match Uuid.Eff.new(Random.seed_u64!).v4!() {
 				Ok(uuid) => uuid.to_str()
 				Err(_) => "random-error"
 			}

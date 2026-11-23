@@ -36,7 +36,7 @@ test! = |{ data, previous, ms }| {
 	}
 
 	bits = data.take_first(16).fold(0.U128, |n, byte| n.shl_wrap(8).bitwise_or(byte.to_u128()))
-	from_bits = Uuid.From.Bits.new(bits)
+	from_bits = Uuid.Bits.new(bits)
 	v4 = from_bits.v4()
 	v7 = from_bits.v7(ms)
 	v8 = from_bits.v8()

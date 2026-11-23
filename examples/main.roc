@@ -13,7 +13,7 @@ import uuid.Uuid
 ## Every example from the README, so CI checks that they compile and run
 main! = |_args| {
 	# Random bits from the operating system
-	gen = Uuid.From.Eff.new(Random.seed_u64!)
+	gen = Uuid.Eff.new(Random.seed_u64!)
 
 	# Version 4: random
 	id = gen.v4!()?
@@ -29,7 +29,7 @@ main! = |_args| {
 	Stdout.line!("parsed: ${parsed.to_str()}")?
 
 	# A pure generator, seeded from the platform's randomness
-	var $gen = Uuid.From.Pure.new(Prng.seed(Random.seed_u64!()?))
+	var $gen = Uuid.Pure.new(Prng.seed(Random.seed_u64!()?))
 	(first, $gen) = $gen.v4()
 	(second, $gen) = $gen.v4()
 	Stdout.line!("seeded v4s: ${first.to_str()} ${second.to_str()}")?
@@ -48,9 +48,9 @@ main! = |_args| {
 	Stdout.line!("v3: ${by_name_md5.to_str()}")?
 
 	# Fixed bits, such as in tests
-	fixed = Uuid.From.Bits.new(0x9191_08f7_52d1_f320_5bac_f847_db41_48a8).v4()
+	fixed = Uuid.Bits.new(0x9191_08f7_52d1_f320_5bac_f847_db41_48a8).v4()
 	Stdout.line!("fixed v4: ${fixed.to_str()}")?
-	custom = Uuid.From.Bits.new(0x1234).v8()
+	custom = Uuid.Bits.new(0x1234).v8()
 	Stdout.line!("custom v8: ${custom.to_str()}")?
 
 	# Parsing, printing and the exposed types

@@ -28,7 +28,7 @@ import uuid.Uuid
 
 main! = |_args| {
 	# Random bits from the operating system
-	gen = Uuid.From.Eff.new(Random.seed_u64!)
+	gen = Uuid.Eff.new(Random.seed_u64!)
 
 	# Version 4: random
 	id = gen.v4!()?
@@ -55,38 +55,38 @@ This package never asks the platform for anything. You give it a source of
 random numbers and the time, so it works the same on every platform and in
 tests.
 
-`Uuid.From` holds the source of random numbers. Make one and reuse it for
+`Uuid.Eff`, `Uuid.Pure` and `Uuid.Bits` hold the source of random numbers. Make one and reuse it for
 every UUID. With an effectful source, such as basic-cli's `Random.seed_u64!`,
-use `Uuid.From.Eff`, and the source's error passes through. This is the
+use `Uuid.Eff`, and the source's error passes through. This is the
 one to use for IDs, because basic-cli reads the operating system's secure
 random number generator, as RFC 9562 recommends.
 
 ```roc
-gen = Uuid.From.Eff.new(Random.seed_u64!)
+gen = Uuid.Eff.new(Random.seed_u64!)
 id = gen.v4!()?
 ```
 
 With a pure generator, such as [roc-prng](https://github.com/niclas-ahden/roc-prng)'s
-`Seed`, use `Uuid.From.Pure`. Each UUID comes back with the generator to
+`Seed`, use `Uuid.Pure`. Each UUID comes back with the generator to
 use next, so keep it in a mutable variable. Any type with a
 `step : g -> (U64, g)` method works. Seed it from the platform's randomness,
 not the clock, since two processes seeded at the same moment would make the
 same UUIDs. roc-prng's generator isn't cryptographically secure, so prefer
-`Uuid.From.Eff` when UUIDs must be hard to guess.
+`Uuid.Eff` when UUIDs must be hard to guess.
 
 ```roc
 import prng.Random as Prng
 
-var $gen = Uuid.From.Pure.new(Prng.seed(Random.seed_u64!()?))
+var $gen = Uuid.Pure.new(Prng.seed(Random.seed_u64!()?))
 (first, $gen) = $gen.v4()
 (second, $gen) = $gen.v4()
 ```
 
-With random bits you already have, such as in tests, use `Uuid.From.Bits`.
+With random bits you already have, such as in tests, use `Uuid.Bits`.
 Its bits are fixed, so make a new one for every UUID.
 
 ```roc
-id = Uuid.From.Bits.new(0x9191_08f7_52d1_f320_5bac_f847_db41_48a8).v4()
+id = Uuid.Bits.new(0x9191_08f7_52d1_f320_5bac_f847_db41_48a8).v4()
 ```
 
 All three have the same methods, `v4`, `v7`, `next_v7` and `v8`.
@@ -104,7 +104,7 @@ gen.v4!()?                      # 122 random bits
 gen.v7!(unix_ms)?               # the time in milliseconds, then 74 random bits
 gen.next_v7!(last, unix_ms)?    # a version 7 that sorts after `last`
 gen.v8!()?                      # 122 random bits, as version 8
-Uuid.From.Bits.new(mine).v8()   # your own 122 bits, laid out however you need
+Uuid.Bits.new(mine).v8()   # your own 122 bits, laid out however you need
 Uuid.Namespace.dns.v5("www.example.com".to_utf8())
 Uuid.Namespace.dns.v3("www.example.com".to_utf8())
 ```
@@ -201,7 +201,7 @@ the documented forms, read them as Python does, and report each error at
 the position and with the problem the documented rules give. It compares
 `next_v7` with a separate model of RFC 9562 method 1, from previous UUIDs
 around the clock and with full counters. Then it parses UUIDs Python made
-itself, checks the namespaces, and checks that `Uuid.From.Eff` gives distinct
+itself, checks the namespaces, and checks that `Uuid.Eff` gives distinct
 version 4 UUIDs from two separate draws. CI runs 5000 inputs.
 
 The [roc-fuzz](https://github.com/lukewilliamboswell/roc-fuzz) target parses
