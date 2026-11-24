@@ -19,7 +19,7 @@ Written for the Roc 0.1.0_RC1 compiler. The API docs are at
 ```roc
 app [main!] {
 	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.1/7brgwR8YUqfeGrkdfF1V4GPPN7DnP7ftqub9KcrTEZtr.tar.zst",
-	uuid: "https://github.com/jaredramirez/roc-uuid/releases/download/1.0.0-rc.2/3LfojcTXGvHaoHe1o9dYTZ3kzNW9ugFV6MsoKAHq2z5M.tar.zst",
+	uuid: "https://github.com/jaredramirez/roc-uuid/releases/download/1.0.0/85196kZHpzf9MjMegPgdUWo8eYAMLL5KxSZM45jMEewA.tar.zst",
 }
 
 import pf.Random
@@ -257,7 +257,7 @@ request.
 
 ## Releasing
 
-Push a version tag such as `1.0.0`, or `1.0.0-rc.1` for a release
+Push a version tag such as `1.1.0`, or `1.1.0-rc.1` for a release
 candidate. The release workflow runs the tests and the differential test,
 bundles `package/` with `just bundle`, and attaches the archive to a GitHub
 release whose notes give the package URL. Release candidates are marked as
