@@ -19,7 +19,7 @@ Written for the Roc 0.1.0_RC1 compiler. The API docs are at
 ```roc
 app [main!] {
 	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.28.1/7brgwR8YUqfeGrkdfF1V4GPPN7DnP7ftqub9KcrTEZtr.tar.zst",
-	uuid: "https://github.com/jaredramirez/roc-uuid/releases/download/1.0.0-rc.1/CtjD3oaCt1wFWZzaSQJLFGoUykZ7yjPXPEhQfRMsS59.tar.zst",
+	uuid: "https://github.com/jaredramirez/roc-uuid/releases/download/1.0.0-rc.2/3LfojcTXGvHaoHe1o9dYTZ3kzNW9ugFV6MsoKAHq2z5M.tar.zst",
 }
 
 import pf.Random
