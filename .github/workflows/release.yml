@@ -70,6 +70,10 @@ jobs:
         with:
           path: generated-docs
           name: github-pages-${{ github.run_attempt }}
+      # A just-uploaded artifact can take a few seconds to show up in the API
+      # deploy-pages reads, and it gives up quickly when it isn't there
+      - name: Wait for the artifact to be listed
+        run: sleep 20
       - id: deploy
         uses: actions/deploy-pages@v4
         with:
