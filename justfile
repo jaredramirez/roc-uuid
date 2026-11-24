@@ -50,6 +50,10 @@ bench:
     roc build --opt=speed bench/main.roc --output=bench-out/bench
     ./bench-out/bench
 
+# Compare with Rust, Go and Python. Needs `devenv --profile bench shell`.
+bench-compare:
+    python3 bench/compare/run.py
+
 bundle:
     rm -rf dist && mkdir -p dist
     cp LICENSE package/LICENSE

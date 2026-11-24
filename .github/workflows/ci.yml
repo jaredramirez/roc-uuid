@@ -28,5 +28,10 @@ jobs:
         run: devenv shell just examples
       - name: Compare against Python's uuid module
         run: devenv shell just diff --count 5000
+      - name: Compare speed with Rust, Go and Python
+        # Runner timings are noisy, so this only keeps the comparison
+        # programs building and records the numbers in the job summary
+        shell: bash
+        run: devenv --profile bench shell just bench-compare | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Fuzz for 60 seconds
         run: devenv shell just fuzz 60

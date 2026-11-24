@@ -48,6 +48,17 @@ in
     pkgs.python314
   ];
 
+  # Other UUID libraries for `just bench-compare`, kept out of the default
+  # shell so day-to-day work doesn't need Rust and Go. Enter it with
+  # `devenv --profile bench shell`.
+  profiles.bench.module = {
+    packages = [
+      pkgs.cargo
+      pkgs.rustc
+      pkgs.go
+    ];
+  };
+
   # One command per line: devenv runs this with `set -e`, which ignores a
   # failure inside an `&&` list, so `a && b && c` could never fail
   enterTest = ''

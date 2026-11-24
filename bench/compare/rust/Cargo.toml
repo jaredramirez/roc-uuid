@@ -1,0 +1,12 @@
+[package]
+name = "uuid-compare"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+uuid = { version = "1", features = ["v3", "v5"] }
+
+[profile.release]
+codegen-units = 1
+lto = true

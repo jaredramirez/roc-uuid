@@ -69,8 +69,7 @@ Uuid :: [Bits(U128)].{
 
 	## The UUID's 16 bytes, in network byte order (big-endian).
 	to_bytes : Uuid -> List(U8)
-	to_bytes = |Bits(bits)|
-		List.from_iter((0.U8).until(16)).map(|i| bits.shr_zf_wrap(120 - i * 8).to_u8_wrap())
+	to_bytes = |Bits(bits)| List.with_capacity(16) |> append_bytes(bits)
 
 	## Parse the canonical form, `f81d4fae-7dec-11d0-a765-00a0c91e6bf6`: 32
 	## hexadecimal digits in groups of 8, 4, 4, 4 and 12, separated by
@@ -95,7 +94,7 @@ Uuid :: [Bits(U128)].{
 	from_str_lenient = |text| {
 		bytes = text.to_utf8()
 		len = bytes.len()
-		if bytes.starts_with(['{']) {
+		if bytes.get(0) == Ok('{') {
 			match bytes.last() {
 				Ok('}') => parse_any(bytes.sublist({ start: 1, len: len - 2 }), 1)
 				_ =>
@@ -116,14 +115,21 @@ Uuid :: [Bits(U128)].{
 	## `f81d4fae-7dec-11d0-a765-00a0c91e6bf6`.
 	to_str : Uuid -> Str
 	to_str = |Bits(bits)| {
-		var $out = List.with_capacity(36)
-		for i in List.from_iter((0.U8).until(32)) {
-			if i == 8 or i == 12 or i == 16 or i == 20 {
-				$out = $out.append('-')
-			}
-			$out = $out.append(hex_digit(bits.shr_zf_wrap(124 - i * 4).to_u8_wrap().bitwise_and(0xF)))
-		}
-		Str.from_utf8_lossy($out)
+		hi = bits.shr_zf_wrap(64).to_u64_wrap()
+		lo = bits.to_u64_wrap()
+		# Each 64-bit half as 16 hex digits, most significant first
+		d0 = hex_chars(hi)
+		d1 = hex_chars(lo)
+		# Spread the digits over the 36 bytes and drop hyphens into the gaps
+		out0 = d0.table_lookup(spread_0).bitwise_and(digit_lanes_0).bitwise_or(hyphen_lanes_0)
+		out1 = d0.table_lookup(spread_1a).bitwise_and(first_2).bitwise_or(d1.table_lookup(spread_1b).bitwise_and(digit_lanes_1)).bitwise_or(hyphen_lanes_1)
+		out2 = d1.table_lookup(spread_2)
+		List.with_capacity(48)
+			|> append_vector(out0)
+			|> append_vector(out1)
+			|> append_vector(out2)
+			|> List.take_first(36)
+			|> Str.from_utf8_lossy
 	}
 
 	## The URN form, `urn:uuid:f81d4fae-7dec-11d0-a765-00a0c91e6bf6`.
@@ -203,11 +209,11 @@ Uuid :: [Bits(U128)].{
 
 		## A version 5 UUID: the SHA-1 hash of the namespace followed by `name`
 		v5 : Uuid.Namespace, List(U8) -> Uuid
-		v5 = |ns, name| name_based(Sha1.hash(ns.uuid.to_bytes().concat(name)).to_bytes(), 5)
+		v5 = |ns, name| name_based(Sha1.hash(name_input(ns, name)).to_bytes(), 5)
 
 		## A version 3 UUID: the MD5 hash of the namespace followed by `name`
 		v3 : Uuid.Namespace, List(U8) -> Uuid
-		v3 = |ns, name| name_based(Md5.hash(ns.uuid.to_bytes().concat(name)).to_bytes(), 3)
+		v3 = |ns, name| name_based(Md5.hash(name_input(ns, name)).to_bytes(), 3)
 
 		## `v5` of a name given as text, using its UTF-8 bytes
 		##
@@ -478,7 +484,10 @@ with_version = |bits, version|
 ## A name-based UUID from the first 16 bytes of a hash
 name_based : List(U8), U128 -> Uuid
 name_based = |hash, version|
-	with_version(hash.take_first(16).fold(0, |bits, byte| bits.shl_wrap(8).bitwise_or(byte.to_u128())), version)
+	match U8x16.load(hash, 0) {
+		Ok(first) => with_version(from_vector(first), version)
+		Err(OutOfBounds) => crash "SHA-1 and MD5 hashes are longer than 16 bytes"
+	}
 
 low_80_bits : U128
 low_80_bits = 0xFFFF_FFFF_FFFF_FFFF_FFFF
@@ -505,6 +514,47 @@ join = |hi, lo| hi.to_u128().shl_wrap(64).bitwise_or(lo.to_u128())
 hex_digit : U8 -> U8
 hex_digit = |n| if (n < 10) '0' + n else 'a' + n - 10
 
+## Append the hex digits of `word` from bit `from` down to bit `to`, both
+## multiples of 4
+append_hex : List(U8), U64, U8, U8 -> List(U8)
+append_hex = |out, word, from, to| {
+	var $out = out
+	var $shift = from
+	while $shift > to {
+		$shift = $shift - 4
+		$out = $out.append(hex_digit(word.shr_zf_wrap($shift).to_u8_wrap().bitwise_and(0xF)))
+	}
+	$out
+}
+
+## Append the 16 bytes of `bits`, big-endian
+append_bytes : List(U8), U128 -> List(U8)
+append_bytes = |out, bits| to_vector(bits).append_to(out)
+
+## The 16 bytes of `bits` as a vector, most significant first
+to_vector : U128 -> U8x16
+to_vector = |bits|
+	U32x4.splat(0)
+		.with_lane(0, bits.shr_zf_wrap(96).to_u32_wrap())
+		.with_lane(1, bits.shr_zf_wrap(64).to_u32_wrap())
+		.with_lane(2, bits.shr_zf_wrap(32).to_u32_wrap())
+		.with_lane(3, bits.to_u32_wrap())
+		.to_u8x16_bits()
+		.table_lookup(swap_u32_bytes)
+
+## The 128 bits of 16 bytes, most significant first
+from_vector : U8x16 -> U128
+from_vector = |v| {
+	words = v.table_lookup(swap_u32_bytes).to_u32x4_bits()
+	word = |i| words.get_lane(i).to_u128()
+	word(0).shl_wrap(96).bitwise_or(word(1).shl_wrap(64)).bitwise_or(word(2).shl_wrap(32)).bitwise_or(word(3))
+}
+
+## The namespace's bytes followed by the name, the input to the hash for
+## versions 3 and 5
+name_input : Uuid.Namespace, List(U8) -> List(U8)
+name_input = |ns, name| List.with_capacity(16 + name.len()) |> append_bytes(ns.uuid.to_u128()) |> List.concat(name)
+
 ## The value of a hexadecimal digit in either case
 hex_value : U8 -> Try(U8, [NotHex])
 hex_value = |c|
@@ -521,7 +571,11 @@ hex_value = |c|
 ## Whether `bytes` starts with `urn:uuid:` in any case
 has_urn_prefix : List(U8) -> Bool
 has_urn_prefix = |bytes|
-	bytes.take_first(9).map(|c| if (c >= 'A' and c <= 'Z') c + 32 else c) == "urn:uuid:".to_utf8()
+	match bytes.get(0) {
+		# Check the first letter before building the lowercase copy
+		Ok('u') | Ok('U') => bytes.take_first(9).map(|c| if (c >= 'A' and c <= 'Z') c + 32 else c) == "urn:uuid:".to_utf8()
+		_ => False
+	}
 
 ## Parse the canonical form or 32 hexadecimal digits, choosing by whether a
 ## hyphen comes after the first 8 digits. `offset` is where `bytes` starts in
@@ -534,9 +588,187 @@ parse_any = |bytes, offset|
 		parse_hex(bytes, offset)
 	}
 
-## Parse exactly 36 bytes of canonical form
+## Parse exactly 36 bytes of canonical form. Valid text takes the fast path,
+## which checks everything at once at the end, and anything else goes through
+## `find_canonical_problem` to say where it went wrong.
 parse_canonical : List(U8), U64 -> Try(Uuid, Uuid.ParseErr)
 parse_canonical = |bytes, offset| {
+	hyphens_ok =
+		bytes.len() == 36
+			and bytes.get(8) == Ok('-')
+			and bytes.get(13) == Ok('-')
+			and bytes.get(18) == Ok('-')
+			and bytes.get(23) == Ok('-')
+	if hyphens_ok {
+		match decode_canonical(bytes) {
+			Ok(bits) => return Ok(Bits(bits))
+			Err(NotHex) => {}
+		}
+	}
+	find_canonical_problem(bytes, offset)
+}
+
+## The 128 bits of 36 bytes of canonical text, which the caller has checked
+## has its hyphens in place, or `NotHex` if any other byte isn't a hex digit.
+## Three overlapping 16-byte loads cover the text. Each lane becomes its
+## digit's value, then shuffles gather the 32 digits into two vectors, and
+## pairs of digits are joined into bytes.
+decode_canonical : List(U8) -> Try(U128, [NotHex])
+decode_canonical = |bytes| {
+	(c0, c1, c2) = match (U8x16.load(bytes, 0), U8x16.load(bytes, 16), U8x16.load(bytes, 20)) {
+		(Ok(a), Ok(b), Ok(c)) => (a, b, c)
+		_ => crash "decode_canonical needs 36 bytes"
+	}
+	(n0, ok0) = hex_lanes(c0)
+	(n1, ok1) = hex_lanes(c1)
+	(n2, ok2) = hex_lanes(c2)
+	# The hyphen lanes were checked already, so they count as valid
+	valid = ok0.bitwise_or(hyphens_at_0).bitwise_and(ok1.bitwise_or(hyphens_at_16)).bitwise_and(ok2.bitwise_or(hyphens_at_20))
+	if !valid.all_lanes_set() {
+		return Err(NotHex)
+	}
+	# Digits 0 to 15 are in lanes 0-7, 9-12 and 14-15 of the first load and
+	# 0-1 of the second, and digits 16 to 31 in lanes 3-6 and 8-15 of the
+	# second and 12-15 of the third
+	high = n0.table_lookup(gather_0a).bitwise_and(first_14).bitwise_or(n1.table_lookup(gather_0b).bitwise_and(last_2))
+	low = n1.table_lookup(gather_1a).bitwise_and(first_12).bitwise_or(n2.table_lookup(gather_1b).bitwise_and(last_4))
+	Ok(join(pack_digits(high), pack_digits(low)))
+}
+
+## Each lane's hex digit value, and a lane mask of which lanes are hex digits
+hex_lanes : U8x16 -> (U8x16, U8x16)
+hex_lanes = |chars| {
+	digit = chars.minus_wrap(U8x16.splat('0'))
+	letter = chars.bitwise_or(U8x16.splat(0x20)).minus_wrap(U8x16.splat('a'))
+	is_digit = digit.lt_lanes(U8x16.splat(10))
+	is_letter = letter.lt_lanes(U8x16.splat(6))
+	values = digit.bitwise_and(is_digit).bitwise_or(letter.plus_wrap(U8x16.splat(10)).bitwise_and(is_letter))
+	(values, is_digit.bitwise_or(is_letter))
+}
+
+## The 64-bit number written by 16 hex digit values, most significant first
+pack_digits : U8x16 -> U64
+pack_digits = |digits| {
+	# Each 16-bit lane becomes high * 16 + low, then the low bytes of the
+	# lanes are gathered in reverse, so the first digit pair is the top byte
+	words = digits.dot_pairs_saturated(digit_pair_weights).to_u8x16_bits().table_lookup(reverse_even_bytes).to_u32x4_bits()
+	words.get_lane(1).to_u64().shl_wrap(32).bitwise_or(words.get_lane(0).to_u64())
+}
+
+## The 16 hex digits of `word`, most significant first
+hex_chars : U64 -> U8x16
+hex_chars = |word| {
+	# The bytes most significant first, then each byte's two nibbles
+	bytes = U32x4.splat(0).with_lane(0, word.shr_zf_wrap(32).to_u32_wrap()).with_lane(1, word.to_u32_wrap()).to_u8x16_bits().table_lookup(reverse_first_8)
+	high = bytes.shr_zf_wrap(4)
+	low = bytes.bitwise_and(U8x16.splat(0x0F))
+	nibbles = high.table_lookup(interleave_even).bitwise_and(even_lanes).bitwise_or(low.table_lookup(interleave_odd).bitwise_and(odd_lanes))
+	hex_alphabet.table_lookup(nibbles)
+}
+
+append_vector : List(U8), U8x16 -> List(U8)
+append_vector = |out, v| v.append_to(out)
+
+vector : List(U8) -> U8x16
+vector = |lanes|
+	match U8x16.from_list(lanes) {
+		Ok(v) => v
+		Err(WrongLength) => crash "vectors have 16 lanes"
+	}
+
+hyphens_at_0 : U8x16
+hyphens_at_0 = vector([0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0, 0, 0, 0, 0xFF, 0, 0])
+
+hyphens_at_16 : U8x16
+hyphens_at_16 = vector([0, 0, 0xFF, 0, 0, 0, 0, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0])
+
+hyphens_at_20 : U8x16
+hyphens_at_20 = vector([0, 0, 0, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+
+gather_0a : U8x16
+gather_0a = vector([0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 14, 15, 0, 0])
+
+gather_0b : U8x16
+gather_0b = vector([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
+
+gather_1a : U8x16
+gather_1a = vector([3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 0, 0, 0, 0])
+
+gather_1b : U8x16
+gather_1b = vector([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 13, 14, 15])
+
+first_14 : U8x16
+first_14 = vector([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0])
+
+last_2 : U8x16
+last_2 = vector([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF])
+
+first_12 : U8x16
+first_12 = vector([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0])
+
+last_4 : U8x16
+last_4 = vector([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF])
+
+digit_pair_weights : I8x16
+digit_pair_weights = vector([16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1]).to_i8x16_bits()
+
+## Lane i is digit i of the first 16 when it isn't a hyphen
+spread_0 : U8x16
+spread_0 = vector([0, 1, 2, 3, 4, 5, 6, 7, 0, 8, 9, 10, 11, 0, 12, 13])
+
+digit_lanes_0 : U8x16
+digit_lanes_0 = vector([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0xFF, 0xFF])
+
+hyphen_lanes_0 : U8x16
+hyphen_lanes_0 = vector([0, 0, 0, 0, 0, 0, 0, 0, '-', 0, 0, 0, 0, '-', 0, 0])
+
+spread_1a : U8x16
+spread_1a = vector([14, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+
+spread_1b : U8x16
+spread_1b = vector([0, 0, 0, 0, 1, 2, 3, 0, 4, 5, 6, 7, 8, 9, 10, 11])
+
+first_2 : U8x16
+first_2 = vector([0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+
+digit_lanes_1 : U8x16
+digit_lanes_1 = vector([0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])
+
+hyphen_lanes_1 : U8x16
+hyphen_lanes_1 = vector([0, 0, '-', 0, 0, 0, 0, '-', 0, 0, 0, 0, 0, 0, 0, 0])
+
+spread_2 : U8x16
+spread_2 = vector([12, 13, 14, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+
+## Reverses the bytes of each 32-bit lane
+swap_u32_bytes : U8x16
+swap_u32_bytes = vector([3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12])
+
+reverse_first_8 : U8x16
+reverse_first_8 = vector([3, 2, 1, 0, 7, 6, 5, 4, 0, 0, 0, 0, 0, 0, 0, 0])
+
+interleave_even : U8x16
+interleave_even = vector([0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7])
+
+interleave_odd : U8x16
+interleave_odd = interleave_even
+
+even_lanes : U8x16
+even_lanes = vector([0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0])
+
+odd_lanes : U8x16
+odd_lanes = vector([0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF, 0, 0xFF])
+
+hex_alphabet : U8x16
+hex_alphabet = vector("0123456789abcdef".to_utf8())
+
+reverse_even_bytes : U8x16
+reverse_even_bytes = vector([14, 12, 10, 8, 6, 4, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+
+## The error for canonical text that the fast path in `parse_canonical`
+## rejected, or the UUID if it turns out to be valid
+find_canonical_problem : List(U8), U64 -> Try(Uuid, Uuid.ParseErr)
+find_canonical_problem = |bytes, offset| {
 	var $bits = 0.U128
 	var $index = 0.U64
 	var $problem = None
@@ -844,6 +1076,38 @@ expect Uuid.from_bytes([1, 2, 3]) == Err(WrongLength(3))
 expect parse("00112233-4455-6677-8899-aabbccddeeff").to_bytes() == [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]
 
 # Strict parsing reports what's wrong and where
+## Every byte value at the first and last digit, which the fast path reads
+## from different loads. Only hex digits parse, and anything else is reported
+## at its own position.
+expect {
+	base = "f81d4fae-7dec-11d0-a765-00a0c91e6bf6".to_utf8()
+	List.from_iter((0.U64).until(256)).all(
+		|n| {
+			c = n.to_u8_wrap()
+			is_hex = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F')
+			[0, 35].all(
+				|at| {
+					result = match base.set(at, c) {
+						Ok(text) => Uuid.from_str(Str.from_utf8_lossy(text))
+						Err(OutOfBounds) => Err(InvalidUuid({ index: 99, problem: WrongLength }))
+					}
+					if is_hex {
+						result.is_ok()
+					} else {
+						# A byte that isn't ASCII becomes a multi-byte replacement
+						# character, which is also wrong at this position
+						match result {
+							Err(InvalidUuid({ index, problem: InvalidChar(_) })) => index == at
+							Err(InvalidUuid({ index, problem: WrongLength })) => c >= 0x80 and index >= at
+							_ => False
+						}
+					}
+				},
+			)
+		},
+	)
+}
+
 expect Uuid.from_str("f81d4fae7dec11d0a76500a0c91e6bf6") == Err(InvalidUuid({ index: 8, problem: ExpectedHyphen }))
 
 expect Uuid.from_str("f81d4fae-7dec-11d0-a765-00a0c91e6bfg") == Err(InvalidUuid({ index: 35, problem: InvalidChar('g') }))

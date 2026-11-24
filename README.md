@@ -171,6 +171,36 @@ byte offset in the text. The types are `Uuid.ParseErr`, `Uuid.Version` and
 - `==`, `<`, `List.sort` and the rest compare in RFC 9562 byte order, which
   is time order for version 7, and a `Uuid` works as a `Dict` key
 
+## Performance
+
+Parsing and printing use 16-byte SIMD vectors. `from_str` checks the hyphens,
+decodes all 32 digits at once, and only walks the text byte by byte to find
+the problem when it's invalid. `v4`, `v7` and `v8` are a few bit operations.
+
+`just bench-compare` times the same operations on the same 10,000 UUIDs with
+Rust, Go and Python. Here's nanoseconds per call on an Apple M5 Pro, lower is
+better.
+
+| Operation | roc-uuid | Rust `uuid` | Go `google/uuid` | Python `uuid` |
+| --- | ---: | ---: | ---: | ---: |
+| `from_str` | 6.3 | 9.3 | 14.9 | 363.4 |
+| `from_str_lenient` | 5.8 | n/a | n/a | n/a |
+| `to_str` | 20.3 | 17.5 | 15.6 | 234.4 |
+| `v4` | 0.4 | 0.7 | 19.5 | 322.5 |
+| `v7` | 0.4 | 1.0 | n/a | n/a |
+| `next_v7` | 1.5 | n/a | n/a | n/a |
+| `v8` | 0.4 | 0.7 | n/a | 382.7 |
+| `v5` | 145.2 | 46.5 | 65.9 | 587.3 |
+| `v3` | 108.2 | 57.0 | 108.6 | 587.3 |
+
+Times under 20 ns move by a few nanoseconds between runs. Every library is
+given the same random bits, so none of them reads the clock or the operating
+system's random number generator. "n/a" means the library has no way to do
+that from given bits. Go's `v4` goes through an `io.Reader`, which is the only
+way it takes bits. `v5` and `v3` are slower because SHA-1 and MD5 in Roc can't
+use the CPU's SHA-1 instructions the way Go can, and building the short list
+to hash costs more in Roc than in Rust.
+
 ## Development
 
 Development needs [Nix](https://nixos.org/download/) and
@@ -185,6 +215,14 @@ just test-all   # the tests, with every backend
 just diff       # compare against Python's uuid module
 just fuzz 30    # check the fuzz examples, then explore for 30 seconds
 just bench      # nanoseconds per call
+```
+
+`just bench-compare` needs Rust and Go, which live in a separate profile so
+the default shell stays small.
+
+```sh
+devenv --profile bench shell
+just bench-compare
 ```
 
 `devenv test` runs the checks, tests and a formatting check.
